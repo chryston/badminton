@@ -46,9 +46,9 @@ CREATE TABLE IF NOT EXISTS shuttle_batches (
     brand               text        NOT NULL,
     owner_label         text,
     cost_per_tube       numeric     NOT NULL,
-    shuttles_per_tube   int         NOT NULL,
-    cost_per_shuttle    numeric     NOT NULL,
-    remaining_count     int         NOT NULL DEFAULT 0,
+    shuttles_per_tube   int         NOT NULL CHECK (shuttles_per_tube > 0),
+    cost_per_shuttle    numeric GENERATED ALWAYS AS (cost_per_tube / NULLIF(shuttles_per_tube, 0)) STORED,
+    remaining_count     int         NOT NULL DEFAULT 0 CHECK (remaining_count >= 0),
     is_active           boolean     NOT NULL DEFAULT true,
     purchased_at        date,
     created_at          timestamptz NOT NULL DEFAULT now()
@@ -65,10 +65,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     start_time          time        NOT NULL,
     end_time            time        NOT NULL,
     courts_booked       text        NOT NULL,
-    num_courts          int         NOT NULL DEFAULT 1,
+    num_courts          int         NOT NULL DEFAULT 1 CHECK (num_courts > 0),
     skill_level         text        NOT NULL DEFAULT 'HB - LI',
     pub_fee             numeric     NOT NULL,
-    max_pax             int         NOT NULL,
+    max_pax             int         NOT NULL CHECK (max_pax > 0),
     status              text        NOT NULL DEFAULT 'internal'
                             CHECK (status IN ('internal', 'published', 'completed')),
     telegram_message_id bigint,
@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS roster_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_roster_entries_session_id ON roster_entries (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_venue_id        ON sessions (venue_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_date            ON sessions (date);
+CREATE INDEX IF NOT EXISTS idx_roster_entries_player_id ON roster_entries (player_id);
 
 -- ------------------------------------------------------------
 -- shuttle_usage

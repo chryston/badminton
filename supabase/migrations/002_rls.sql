@@ -9,6 +9,7 @@
 -- ------------------------------------------------------------
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON players;
 CREATE POLICY "authenticated_full_access" ON players
     FOR ALL TO authenticated
     USING (true)
@@ -19,6 +20,7 @@ CREATE POLICY "authenticated_full_access" ON players
 -- ------------------------------------------------------------
 ALTER TABLE venues ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON venues;
 CREATE POLICY "authenticated_full_access" ON venues
     FOR ALL TO authenticated
     USING (true)
@@ -29,6 +31,7 @@ CREATE POLICY "authenticated_full_access" ON venues
 -- ------------------------------------------------------------
 ALTER TABLE shuttle_batches ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON shuttle_batches;
 CREATE POLICY "authenticated_full_access" ON shuttle_batches
     FOR ALL TO authenticated
     USING (true)
@@ -39,6 +42,7 @@ CREATE POLICY "authenticated_full_access" ON shuttle_batches
 -- ------------------------------------------------------------
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON sessions;
 CREATE POLICY "authenticated_full_access" ON sessions
     FOR ALL TO authenticated
     USING (true)
@@ -49,6 +53,7 @@ CREATE POLICY "authenticated_full_access" ON sessions
 -- ------------------------------------------------------------
 ALTER TABLE roster_entries ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON roster_entries;
 CREATE POLICY "authenticated_full_access" ON roster_entries
     FOR ALL TO authenticated
     USING (true)
@@ -59,6 +64,7 @@ CREATE POLICY "authenticated_full_access" ON roster_entries
 -- ------------------------------------------------------------
 ALTER TABLE shuttle_usage ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "authenticated_full_access" ON shuttle_usage;
 CREATE POLICY "authenticated_full_access" ON shuttle_usage
     FOR ALL TO authenticated
     USING (true)
