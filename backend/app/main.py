@@ -2,8 +2,9 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.bot.runner import bot_runner
 from app.config import settings
@@ -25,6 +26,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Badminton API", lifespan=lifespan)
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    detail = str(exc)
+    status_code = 404 if "not found" in detail.lower() else 422
+    return JSONResponse(status_code=status_code, content={"detail": detail})
+
 
 app.add_middleware(
     CORSMiddleware,
