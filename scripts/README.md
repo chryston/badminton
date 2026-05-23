@@ -1,0 +1,47 @@
+# Scripts
+
+## import_excel.py
+
+Seeds the Supabase database with historical data from `Badminton.xlsx`.
+
+### Prerequisites
+
+```bash
+pip install openpyxl supabase
+```
+
+### Usage
+
+Set environment variables:
+
+```bash
+export SUPABASE_URL=https://your-project.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+Then run from the repo root:
+
+```bash
+python scripts/import_excel.py
+```
+
+### What gets imported
+
+| Sheet | Table | Notes |
+|---|---|---|
+| `Court List` | `venues` | 9 venues with court cost and default pub fee |
+| `Member List` | `players` | Internal members (`is_internal=True`); unique names extracted from attendance log |
+| `Pub List-Selection` | `players` | Public players (`is_internal=False`); skill level and notes imported where available |
+| `Shuttle Purchase` | `shuttle_batches` | One row per (shuttle type × owner); all marked `is_active=False` |
+
+### What is NOT imported
+
+- **Historical sessions** (`Profit & Loss` sheet) — the data is denormalised and
+  tightly coupled to the Excel layout; importing it reliably is error-prone.
+  Start fresh sessions from the web app instead.
+- **Roster entries** — depend on historical sessions which are not imported.
+
+### Re-running
+
+The script is safe to re-run.  Existing rows are detected by name (players, venues)
+or by `batch_name + owner_label` (shuttle batches) and silently skipped.
