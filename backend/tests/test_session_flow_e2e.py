@@ -132,6 +132,11 @@ def test_complete_session_lifecycle():
             patch("app.db.client._service_client", mock_client),
             patch("app.bot.runner.bot_runner.build"),
             patch("app.bot.runner.bot_runner.start_polling", new_callable=AsyncMock),
+            # Mock all bot action methods — they fire as background tasks and would
+            # otherwise consume DB mock responses intended for subsequent API calls.
+            patch("app.bot.runner.bot_runner.post_session_announcement", new_callable=AsyncMock),
+            patch("app.bot.runner.bot_runner.edit_session_message", new_callable=AsyncMock),
+            patch("app.bot.runner.bot_runner.update_payment_in_message", new_callable=AsyncMock),
         ):
             with TestClient(app) as client:
                 headers = {"Authorization": "Bearer test-token"}
