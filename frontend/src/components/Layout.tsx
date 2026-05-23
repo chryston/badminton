@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
 const tabs = [
-  { to: '/', label: 'Sessions', icon: '📅', end: true },
+  { to: '/sessions', label: 'Sessions', icon: '📅', end: false },
   { to: '/players', label: 'Players', icon: '👥', end: false },
   { to: '/inventory', label: 'Stock', icon: '🏸', end: false },
   { to: '/pnl', label: 'P&L', icon: '📊', end: false },
