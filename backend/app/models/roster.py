@@ -30,5 +30,5 @@ class PnLResult(BaseModel):
     court_cost: float
     shuttle_cost: float
     net: float
-    verified_paid_count: int
+    external_paid_count: int
     total_roster_count: int

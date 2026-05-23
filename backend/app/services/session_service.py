@@ -82,19 +82,28 @@ def update(session_id: UUID, data: SessionUpdate) -> Session:
 
 def publish(session_id: UUID) -> Session:
     client = get_service_client()
+    existing = client.table("sessions").select("status").eq("id", str(session_id)).execute()
+    if not existing.data:
+        raise ValueError(f"Session {session_id} not found")
+    if existing.data[0]["status"] != "internal":
+        raise ValueError("Session must be in 'internal' status to publish")
     result = (
         client.table("sessions")
         .update({"status": "published"})
         .eq("id", str(session_id))
         .execute()
     )
-    if not result.data:
-        raise ValueError(f"Session {session_id} not found")
     return Session(**result.data[0])
 
 
 def complete(session_id: UUID, shuttle_usages: list[ShuttleUsageCreate]) -> SessionWithRoster:
     client = get_service_client()
+
+    existing = client.table("sessions").select("status").eq("id", str(session_id)).execute()
+    if not existing.data:
+        raise ValueError(f"Session {session_id} not found")
+    if existing.data[0]["status"] != "published":
+        raise ValueError("Session must be published before completing")
 
     # Deduct shuttles from batches first (raises ValueError if insufficient)
     for usage in shuttle_usages:

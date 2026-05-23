@@ -18,6 +18,7 @@ class Player(BaseModel):
 
 class PlayerCreate(BaseModel):
     name: str
+    telegram_id: int | None = None
     phone: str | None = None
     skill_level: str | None = None
     is_internal: bool = False

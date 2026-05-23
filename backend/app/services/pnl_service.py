@@ -50,7 +50,7 @@ def calculate(
         court_cost=court_cost,
         shuttle_cost=shuttle_cost,
         net=net,
-        verified_paid_count=len(fee_paying_entries),
+        external_paid_count=len(fee_paying_entries),
         total_roster_count=len(session.roster),
     )
 
@@ -71,7 +71,7 @@ def get_session_pnl(session_id: UUID) -> PnLResult:
             .in_("id", [str(bid) for bid in batch_ids])
             .execute()
         )
-        shuttle_batches = {ShuttleBatch(**row).id: ShuttleBatch(**row) for row in result.data}
+        shuttle_batches = {batch.id: batch for batch in (ShuttleBatch(**row) for row in result.data)}
 
     # Collect internal player ids for exclusion from fee calculation
     client = get_service_client()

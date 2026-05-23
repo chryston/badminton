@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 from app.db.client import get_service_client
+from app.models.player import PlayerCreate
 from app.models.roster import RosterEntry
 import app.services.player_service as player_service
 
@@ -71,12 +72,9 @@ def add_player(
     # Find or create player
     player = player_service.get_by_telegram_id(telegram_id)
     if player is None:
-        from app.models.player import PlayerCreate
         player = player_service.create(
-            PlayerCreate(name=player_name, is_internal=False)
+            PlayerCreate(name=player_name, is_internal=False, telegram_id=telegram_id)
         )
-        player_service.set_telegram_id(player.id, telegram_id)
-        player = player_service.get_by_telegram_id(telegram_id)
 
     # Check if player already on roster
     existing = (
@@ -169,19 +167,11 @@ def remove_entry(entry_id: UUID) -> RosterEntry | None:
 
     client.table("roster_entries").delete().eq("id", str(entry_id)).execute()
 
-    # Decrement positions of all entries that came after the removed one
-    all_after = (
-        client.table("roster_entries")
-        .select("id, position")
-        .eq("session_id", str(removed.session_id))
-        .gt("position", removed.position)
-        .order("position")
-        .execute()
-    )
-    for entry in all_after.data:
-        client.table("roster_entries").update(
-            {"position": entry["position"] - 1}
-        ).eq("id", entry["id"]).execute()
+    # Decrement positions of all non-waitlisted entries that came after the removed one
+    client.rpc(
+        "decrement_positions_after",
+        {"p_session_id": str(removed.session_id), "p_position": removed.position},
+    ).execute()
 
     # If the removed entry was active, promote first waitlisted player
     if not removed.is_waitlisted:

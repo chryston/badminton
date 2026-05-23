@@ -60,6 +60,9 @@ def deduct(batch_id: UUID, count: int) -> ShuttleBatch:
         client.table("shuttle_batches")
         .update({"remaining_count": new_count})
         .eq("id", str(batch_id))
+        .eq("remaining_count", batch.remaining_count)
         .execute()
     )
+    if not updated.data:
+        raise ValueError("Concurrent update detected, please retry")
     return ShuttleBatch(**updated.data[0])
