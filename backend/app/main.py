@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -8,7 +9,22 @@ from app.bot.runner import bot_runner
 from app.config import settings
 from app.routers import sessions, roster, players, inventory, pnl, venues
 
-app = FastAPI(title="Badminton Session Manager", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    bot_runner.build()
+    polling_task = asyncio.create_task(bot_runner.start_polling())
+    yield
+    # shutdown
+    polling_task.cancel()
+    try:
+        await polling_task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Badminton API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,18 +40,6 @@ app.include_router(players.router, prefix="/api/v1", tags=["players"])
 app.include_router(inventory.router, prefix="/api/v1", tags=["inventory"])
 app.include_router(pnl.router, prefix="/api/v1", tags=["pnl"])
 app.include_router(venues.router, prefix="/api/v1", tags=["venues"])
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    bot_runner.build()
-    asyncio.create_task(bot_runner.start_polling())
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    # The polling task is cancelled automatically when the event loop shuts down.
-    pass
 
 
 @app.get("/health")

@@ -143,12 +143,19 @@ class BotRunner:
             build_full_button() if is_full else build_join_button(str(session_id))
         )
 
-        await self._app.bot.edit_message_text(
-            chat_id=settings.telegram_lowkey_chat_id,
-            message_id=session.telegram_message_id,
-            text=text,
-            reply_markup=keyboard,
-        )
+        from telegram.error import BadRequest
+
+        try:
+            await self._app.bot.edit_message_text(
+                chat_id=settings.telegram_lowkey_chat_id,
+                message_id=session.telegram_message_id,
+                text=text,
+                reply_markup=keyboard,
+            )
+        except BadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
+            # silently ignore — message content unchanged
 
     async def update_payment_in_message(self, session_id: UUID) -> None:
         """Trigger a full message re-render after a payment status change."""

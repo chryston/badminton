@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 PENDING_TIMEOUT_MINUTES = 10
@@ -19,7 +19,7 @@ class ConversationState:
     def set_pending(self, telegram_user_id: int, session_id: UUID) -> None:
         self._pending[telegram_user_id] = {
             "session_id": session_id,
-            "expires_at": datetime.utcnow() + timedelta(minutes=PENDING_TIMEOUT_MINUTES),
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=PENDING_TIMEOUT_MINUTES),
         }
 
     def get_pending(self, telegram_user_id: int) -> UUID | None:
@@ -27,7 +27,7 @@ class ConversationState:
         state = self._pending.get(telegram_user_id)
         if state is None:
             return None
-        if datetime.utcnow() > state["expires_at"]:
+        if datetime.now(timezone.utc) > state["expires_at"]:
             del self._pending[telegram_user_id]
             return None
         return state["session_id"]
@@ -37,7 +37,7 @@ class ConversationState:
 
     def cleanup_expired(self) -> None:
         """Remove all expired entries. Called periodically by the job queue."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired = [uid for uid, s in self._pending.items() if now > s["expires_at"]]
         for uid in expired:
             del self._pending[uid]

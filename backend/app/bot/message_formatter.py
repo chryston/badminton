@@ -44,7 +44,7 @@ def format_session_announcement(
 
     for i, entry in enumerate(active, 1):
         name = _entry_display_name(entry, player_names)
-        paid_label = " ✅" if entry.payment_status == "verified_paid" else ""
+        paid_label = " (paid)" if entry.payment_status == "verified_paid" else ""
         lines.append(f"{i}. {name}{paid_label}")
 
     if active_count >= session.max_pax:
