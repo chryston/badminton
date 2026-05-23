@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.routers import sessions, roster, players, inventory, pnl, venues
 
 app = FastAPI(title="Badminton Session Manager", version="0.1.0")
 
@@ -13,13 +14,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(sessions.router, prefix="/api/v1", tags=["sessions"])
+app.include_router(roster.router, prefix="/api/v1", tags=["roster"])
+app.include_router(players.router, prefix="/api/v1", tags=["players"])
+app.include_router(inventory.router, prefix="/api/v1", tags=["inventory"])
+app.include_router(pnl.router, prefix="/api/v1", tags=["pnl"])
+app.include_router(venues.router, prefix="/api/v1", tags=["venues"])
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
-# Routers will be included in T5
 # Bot will be started in T6
 
 if __name__ == "__main__":
