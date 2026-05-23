@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
-import type { Session, PnLResult } from '../types'
+import type { Session, PnLResult, Venue } from '../types'
 
 // TODO: This page makes N+1 API calls (one per completed session) to fetch P&L.
 // A future improvement would be a dedicated /api/v1/pnl/summary endpoint that
@@ -29,6 +29,7 @@ function SkeletonCard() {
 export function PnL() {
   const navigate = useNavigate()
   const [items, setItems] = useState<SessionPnL[]>([])
+  const [venues, setVenues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,12 +37,19 @@ export function PnL() {
     const controller = new AbortController()
     async function load(signal: AbortSignal) {
       try {
-        const allSessions = await api.get<Session[]>('/api/v1/sessions', signal)
+        const [allSessions, venueList] = await Promise.all([
+          api.get<Session[]>('/api/v1/sessions', signal),
+          api.get<Venue[]>('/api/v1/venues', signal),
+        ])
+        const venueMap: Record<string, string> = {}
+        for (const v of venueList) venueMap[v.id] = v.name
+        setVenues(venueMap)
+
         const completed = allSessions.filter(s => s.status === 'completed')
         completed.sort((a, b) => (a.date < b.date ? 1 : -1))
 
         // N+1 fetch — acceptable for now, see TODO above
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
           completed.map(async session => {
             const pnl = await api.get<PnLResult>(
               `/api/v1/sessions/${session.id}/pnl`,
@@ -50,7 +58,10 @@ export function PnL() {
             return { session, pnl }
           }),
         )
-        setItems(results)
+        const pnlData = results
+          .filter((r): r is PromiseFulfilledResult<SessionPnL> => r.status === 'fulfilled')
+          .map(r => r.value)
+        setItems(pnlData)
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load P&L data')
@@ -106,6 +117,10 @@ export function PnL() {
               <p className="text-xs text-gray-500">Shuttle Costs</p>
               <p className="text-sm font-medium text-gray-300">${totalShuttleCost.toFixed(2)}</p>
             </div>
+            <div>
+              <p className="text-xs text-gray-500">Total Expenses</p>
+              <p className="text-sm font-medium text-gray-300">${(totalCourtCost + totalShuttleCost).toFixed(2)}</p>
+            </div>
           </div>
         </div>
       )}
@@ -130,6 +145,7 @@ export function PnL() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold text-white">
+                    {venues[session.venue_id] ? `${venues[session.venue_id]} • ` : ''}
                     {new Date(`${session.date}T00:00:00`).toLocaleDateString('en-SG', {
                       weekday: 'short',
                       day: 'numeric',

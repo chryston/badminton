@@ -87,9 +87,17 @@ function PlayerModal({ player, onClose, onSaved }: PlayerModalProps) {
     }
   }
 
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 p-6" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-bold text-white mb-4">
           {player ? 'Edit Player' : 'Add Player'}
         </h2>

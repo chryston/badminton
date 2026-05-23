@@ -92,9 +92,17 @@ function BatchModal({ batch, onClose, onSaved }: BatchModalProps) {
     }
   }
 
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 p-6 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-bold text-white mb-4">
           {batch ? 'Edit Batch' : 'Add Batch'}
         </h2>
@@ -240,11 +248,15 @@ function AdjustCount({ batch, onSaved }: AdjustCountProps) {
     )
   }
 
+  const parsedValue = parseInt(value, 10)
+  const isInvalidInput = isNaN(parsedValue) || parsedValue < 0
+
   async function handleSave() {
+    if (isInvalidInput) return
     setSaving(true)
     try {
       await api.patch(`/api/v1/inventory/${batch.id}`, {
-        remaining_count: parseInt(value, 10),
+        remaining_count: parsedValue,
       })
       setOpen(false)
       onSaved()
@@ -266,7 +278,7 @@ function AdjustCount({ batch, onSaved }: AdjustCountProps) {
       />
       <button
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || isInvalidInput}
         className="rounded-lg bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-700 transition-colors disabled:opacity-50"
       >
         {saving ? '…' : 'Set'}

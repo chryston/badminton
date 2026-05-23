@@ -68,7 +68,14 @@ _VENUE_ROW = {
 }
 
 def _session_with_roster():
-    """Return a fresh dict each call — get_by_id mutates it via row.pop()."""
+    """
+    Returns a fresh dict for each call.
+
+    IMPORTANT: get_by_id() calls row.pop("roster_entries") and row.pop("shuttle_usage")
+    which mutates the dict in place. If the same dict were reused across two execute()
+    side_effect calls, the second call would receive a dict missing those keys and raise
+    a KeyError inside the service. Always generate a new dict here.
+    """
     return {
         **_SESSION_COMPLETED,
         "roster_entries": [dict(_ENTRY_PAID)],

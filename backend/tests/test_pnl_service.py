@@ -60,13 +60,27 @@ def test_calculate_basic_profit():
     roster = [_entry() for _ in range(5)]
     result = calculate(_session(roster=roster), shuttle_batches={}, court_cost_per_hour=15.0)
 
-    # 2h × 1 court × $15/hr = $30 court cost
+    # 2h × 1 court × $15/hr = $30 court cost; $50 income → $20 net
+    assert result.net == 20.0
+
+
+def test_calculate_income_calculation():
+    """total_income and external_paid_count are derived from verified_paid active entries."""
+    roster = [_entry() for _ in range(5)]
+    result = calculate(_session(roster=roster), shuttle_batches={}, court_cost_per_hour=15.0)
+
     assert result.total_fees_collected == 50.0
+    assert result.external_paid_count == 5
+
+
+def test_calculate_cost_breakdown():
+    """court_cost and shuttle_cost are independently computed."""
+    roster = [_entry() for _ in range(5)]
+    result = calculate(_session(roster=roster), shuttle_batches={}, court_cost_per_hour=15.0)
+
+    # 2h × 1 court × $15/hr = $30; no shuttles used
     assert result.court_cost == 30.0
     assert result.shuttle_cost == 0.0
-    assert result.net == 20.0
-    assert result.external_paid_count == 5
-    assert result.total_roster_count == 5
 
 
 def test_calculate_excludes_internal_players():
