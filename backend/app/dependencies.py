@@ -12,10 +12,11 @@ async def require_admin(credentials: HTTPAuthorizationCredentials = Depends(secu
     client = get_anon_client()
     try:
         user_response = client.auth.get_user(credentials.credentials)
-        if not user_response.user:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     except Exception:
         logger.warning("JWT validation failed", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    if not user_response.user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     # Check admin flag in players table
