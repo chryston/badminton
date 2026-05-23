@@ -7,7 +7,7 @@ Seeds the Supabase database with historical data from `Badminton.xlsx`.
 ### Prerequisites
 
 ```bash
-pip install openpyxl supabase
+pip install -r scripts/requirements.txt
 ```
 
 ### Usage

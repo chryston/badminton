@@ -39,8 +39,13 @@ VALID_SKILL_LEVELS = {"HB", "LI", "MB"}
 
 
 def get_client() -> Client:
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    missing = [name for name, val in [("SUPABASE_URL", url), ("SUPABASE_SERVICE_ROLE_KEY", key)] if not val]
+    if missing:
+        for name in missing:
+            print(f"ERROR: {name} environment variable is not set", file=sys.stderr)
+        sys.exit(1)
     return create_client(url, key)
 
 
@@ -291,15 +296,18 @@ def import_shuttle_batches(ws, client: Client) -> tuple[int, int]:
         print("  WARNING: could not locate header row in 'Shuttle Purchase' — skipping.")
         return 0, 0
 
-    headers = list(next(ws.iter_rows(
-        min_row=header_row_idx, max_row=header_row_idx, values_only=True
-    )))
+    headers = [str(h).strip() if h is not None else "" for h in
+               next(ws.iter_rows(min_row=header_row_idx, max_row=header_row_idx, values_only=True))]
 
-    # Fixed column indices
-    col_type = 0          # "Shuttle Type"
-    col_cost_tube = 1     # "Shuttle Cost ($ per Tube)"
-    col_cost_shuttle = 2  # "Shuttle Cost ($ per Shuttle)"
-    col_date = 3          # "Purchased Date"
+    # Locate fixed columns dynamically from header row
+    col_type = next((i for i, h in enumerate(headers) if h == "Shuttle Type"), None)
+    col_cost_tube = next((i for i, h in enumerate(headers) if "per Tube" in h), None)
+    col_cost_shuttle = next((i for i, h in enumerate(headers) if "per Shuttle" in h), None)
+    col_date = next((i for i, h in enumerate(headers) if h == "Purchased Date"), None)
+
+    if any(c is None for c in (col_type, col_cost_tube, col_cost_shuttle, col_date)):
+        print("  WARNING: expected columns not found in 'Shuttle Purchase' — skipping.")
+        return 0, 0
 
     # Parse owner columns: each owner occupies two adjacent columns
     # (count column has header "X (No. of Shuttles)", description column is None).

@@ -22,7 +22,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 }
 
 export const api = {
-  get: <T>(path: string) => apiFetch<T>(path),
+  get: <T>(path: string, signal?: AbortSignal) => apiFetch<T>(path, { signal }),
   post: <T>(path: string, body: unknown) =>
     apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>

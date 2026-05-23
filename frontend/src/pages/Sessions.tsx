@@ -38,11 +38,12 @@ export function Sessions() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    async function load() {
+    const controller = new AbortController()
+    async function load(signal: AbortSignal) {
       try {
         const [sessionList, venueList] = await Promise.all([
-          api.get<Session[]>('/api/v1/sessions'),
-          api.get<Venue[]>('/api/v1/venues'),
+          api.get<Session[]>('/api/v1/sessions', signal),
+          api.get<Venue[]>('/api/v1/venues', signal),
         ])
         sessionList.sort((a, b) => (a.date < b.date ? 1 : -1))
         setSessions(sessionList)
@@ -50,12 +51,14 @@ export function Sessions() {
         for (const v of venueList) venueMap[v.id] = v.name
         setVenues(venueMap)
       } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load sessions')
       } finally {
         setLoading(false)
       }
     }
-    load()
+    load(controller.signal)
+    return () => controller.abort()
   }, [])
 
   return (

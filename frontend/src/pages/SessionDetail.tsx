@@ -184,13 +184,14 @@ export function SessionDetail() {
 
   useEffect(() => {
     if (!id) return
-    async function load() {
+    const controller = new AbortController()
+    async function load(signal: AbortSignal) {
       try {
         const [sess, venues, rosterEntries, playerList] = await Promise.all([
-          api.get<Session>(`/api/v1/sessions/${id}`),
-          api.get<Venue[]>('/api/v1/venues'),
-          api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`),
-          api.get<Player[]>('/api/v1/players'),
+          api.get<Session>(`/api/v1/sessions/${id}`, signal),
+          api.get<Venue[]>('/api/v1/venues', signal),
+          api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`, signal),
+          api.get<Player[]>('/api/v1/players', signal),
         ])
         setSession(sess)
         const venue = venues.find(v => v.id === sess.venue_id)
@@ -200,16 +201,18 @@ export function SessionDetail() {
         for (const p of playerList) map[p.id] = p
         setPlayersById(map)
         if (sess.status === 'completed') {
-          const result = await api.get<PnLResult>(`/api/v1/sessions/${id}/pnl`)
+          const result = await api.get<PnLResult>(`/api/v1/sessions/${id}/pnl`, signal)
           setPnl(result)
         }
       } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load session')
       } finally {
         setLoading(false)
       }
     }
-    load()
+    load(controller.signal)
+    return () => controller.abort()
   }, [id])
 
   async function handlePublish() {
@@ -242,7 +245,12 @@ export function SessionDetail() {
     const updated = await api.post<Session>(`/api/v1/sessions/${id}/complete`, { shuttle_usages: usages })
     setSession(updated)
     setShowCompleteModal(false)
-    await loadPnl()
+    try {
+      await loadPnl()
+    } catch (err) {
+      // P&L fetch failed but session was completed — show warning not error
+      setError('Session completed but P&L could not be loaded. Please refresh.')
+    }
   }
 
   async function handleVerify(entryId: string) {
