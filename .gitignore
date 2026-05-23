@@ -1,0 +1,12 @@
+.worktrees/
+.superpowers/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.vite/
+*.egg-info/
+.venv/
