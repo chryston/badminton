@@ -7,6 +7,9 @@ import { NotFound } from './pages/NotFound'
 import { Sessions } from './pages/Sessions'
 import { NewSession } from './pages/NewSession'
 import { SessionDetail } from './pages/SessionDetail'
+import { Players } from './pages/Players'
+import { Inventory } from './pages/Inventory'
+import { PnL } from './pages/PnL'
 
 export default function App() {
   return (
@@ -22,9 +25,9 @@ export default function App() {
                   <Route path="/sessions" element={<Sessions />} />
                   <Route path="/sessions/new" element={<NewSession />} />
                   <Route path="/sessions/:id" element={<SessionDetail />} />
-                  <Route path="/players" element={<div className="p-4 text-white">Players — coming soon</div>} />
-                  <Route path="/inventory" element={<div className="p-4 text-white">Inventory — coming soon</div>} />
-                  <Route path="/pnl" element={<div className="p-4 text-white">P&L — coming soon</div>} />
+                  <Route path="/players" element={<Players />} />
+                  <Route path="/inventory" element={<Inventory />} />
+                  <Route path="/pnl" element={<PnL />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Layout>
