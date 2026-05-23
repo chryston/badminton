@@ -3,8 +3,8 @@ import { supabase } from './supabase'
 const API_URL = import.meta.env.VITE_API_URL as string
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('Not authenticated')
+  const { data: { session }, error } = await supabase.auth.getSession()
+  if (error ?? !session) throw new Error('Not authenticated')
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${session.access_token}`,
