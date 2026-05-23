@@ -3,6 +3,14 @@ from app.db.client import get_service_client
 from app.models.player import Player, PlayerCreate, PlayerUpdate
 
 
+def get_by_id(player_id: UUID) -> Player:
+    client = get_service_client()
+    result = client.table("players").select("*").eq("id", str(player_id)).execute()
+    if not result.data:
+        raise ValueError(f"Player {player_id} not found")
+    return Player(**result.data[0])
+
+
 def get_all() -> list[Player]:
     client = get_service_client()
     result = client.table("players").select("*").order("name").execute()

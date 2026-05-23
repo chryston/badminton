@@ -40,6 +40,7 @@ class SessionUpdate(BaseModel):
     pub_fee: float | None = None
     max_pax: int | None = None
     paynow_player_id: UUID | None = None
+    telegram_message_id: int | None = None
 
 
 class SessionWithRoster(Session):
