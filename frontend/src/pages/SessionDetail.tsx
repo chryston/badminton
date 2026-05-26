@@ -11,6 +11,7 @@ import type {
   Venue,
   SessionStatus,
   PaymentStatus,
+  CourtSlot,
 } from '../types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -153,6 +154,7 @@ export function SessionDetail() {
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [playersById, setPlayersById] = useState<Record<string, Player>>({})
   const [pnl, setPnl] = useState<PnLResult | null>(null)
+  const [courtSlots, setCourtSlots] = useState<CourtSlot[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -183,16 +185,18 @@ export function SessionDetail() {
     const controller = new AbortController()
     async function load(signal: AbortSignal) {
       try {
-        const [sess, venues, rosterEntries, playerList] = await Promise.all([
+        const [sess, venues, rosterEntries, playerList, courtSlotData] = await Promise.all([
           api.get<Session>(`/api/v1/sessions/${id}`, signal),
           api.get<Venue[]>('/api/v1/venues', signal),
           api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`, signal),
           api.get<Player[]>('/api/v1/players', signal),
+          api.get<CourtSlot[]>(`/api/v1/sessions/${id}/court-slots`, signal),
         ])
         setSession(sess)
         const venue = venues.find(v => v.id === sess.venue_id)
         setVenueName(venue?.name ?? 'Unknown Venue')
         setRoster(rosterEntries)
+        setCourtSlots(courtSlotData)
         const map: Record<string, Player> = {}
         for (const p of playerList) map[p.id] = p
         setPlayersById(map)
@@ -417,10 +421,50 @@ export function SessionDetail() {
                 <span>Total players: {pnl.total_roster_count}</span>
                 <span>Ext. paid: {pnl.external_paid_count}</span>
               </div>
+              {pnl.booker_breakdown.length > 0 && (
+                <div className="mt-3 border-t border-gray-700 pt-3">
+                  <p className="text-xs font-medium text-gray-400 mb-1">Court reimbursements</p>
+                  {pnl.booker_breakdown.map((b) => (
+                    <div key={b.player_id} className="flex justify-between text-sm text-gray-300">
+                      <span>{b.player_name}</span>
+                      <span>${b.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
+
+      {/* Court Slots */}
+      <section className="rounded-xl bg-gray-800 p-4 border border-gray-700 mb-4">
+        <h2 className="text-lg font-semibold text-white mb-3">Court Slots</h2>
+        {courtSlots.length === 0 ? (
+          <p className="text-gray-500 text-sm">No court slots recorded.</p>
+        ) : (
+          <table className="w-full text-sm text-gray-300">
+            <thead>
+              <tr className="text-gray-500 text-xs border-b border-gray-700">
+                <th className="text-left pb-2">Court</th>
+                <th className="text-left pb-2">From</th>
+                <th className="text-left pb-2">To</th>
+                <th className="text-left pb-2">Booker</th>
+              </tr>
+            </thead>
+            <tbody>
+              {courtSlots.map((slot) => (
+                <tr key={slot.id} className="border-b border-gray-700/50">
+                  <td className="py-1.5">{slot.court_label}</td>
+                  <td className="py-1.5">{slot.from_time.slice(0, 5)}</td>
+                  <td className="py-1.5">{slot.to_time.slice(0, 5)}</td>
+                  <td className="py-1.5">{playersById[slot.booker_player_id]?.name ?? slot.booker_player_id.slice(0, 8)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       {/* Roster */}
       <div className="rounded-xl bg-gray-800 border border-gray-700 p-4 mb-4">

@@ -157,6 +157,17 @@ export function PnL() {
                     Income ${pnl.total_fees_collected.toFixed(2)} · Costs $
                     {(pnl.court_cost + pnl.shuttle_cost).toFixed(2)}
                   </p>
+                  {pnl.booker_breakdown.length > 0 && (
+                    <div className="mt-2 text-xs text-gray-400 space-y-0.5">
+                      <span className="font-medium text-gray-300">Court reimbursements:</span>
+                      {pnl.booker_breakdown.map((b) => (
+                        <div key={b.player_id} className="flex justify-between">
+                          <span>{b.player_name}</span>
+                          <span>${b.amount.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <span
                   className={`shrink-0 text-sm font-bold ${
