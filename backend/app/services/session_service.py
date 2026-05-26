@@ -38,17 +38,43 @@ def get_by_id(session_id: UUID) -> SessionWithRoster:
 
 def create(data: SessionCreate) -> Session:
     client = get_service_client()
-    payload = data.model_dump(mode="json")
-    payload["status"] = "internal"
-    result = client.table("sessions").insert(payload).execute()
-    session = Session(**result.data[0])
+
+    max_pax = data.max_pax if data.max_pax is not None else data.num_courts * 6
+
+    session_payload = {
+        "venue_id": str(data.venue_id),
+        "date": data.date.isoformat(),
+        "start_time": data.start_time.strftime("%H:%M:%S"),
+        "duration_hours": data.duration_hours,
+        "courts_booked": data.courts_booked,
+        "num_courts": data.num_courts,
+        "min_skill_level": data.min_skill_level,
+        "max_skill_level": data.max_skill_level,
+        "pub_fee": data.pub_fee,
+        "max_pax": max_pax,
+        "paynow_player_id": str(data.paynow_player_id) if data.paynow_player_id else None,
+    }
+    slots_payload = [
+        {
+            "court_label": slot.court_label,
+            "from_time": slot.from_time.strftime("%H:%M:%S"),
+            "to_time": slot.to_time.strftime("%H:%M:%S"),
+            "booker_player_id": str(slot.booker_player_id),
+        }
+        for slot in data.court_slots
+    ]
+
+    result = client.rpc(
+        "create_session_with_slots",
+        {"session_data": session_payload, "slots_data": slots_payload},
+    ).execute()
+    session = Session(**result.data)
 
     internal_result = (
         client.table("players").select("*").eq("is_internal", True).order("name").execute()
     )
-    internal_players = internal_result.data
 
-    if internal_players:
+    if internal_result.data:
         now = datetime.now(timezone.utc).isoformat()
         roster_rows = [
             {
@@ -60,7 +86,7 @@ def create(data: SessionCreate) -> Session:
                 "position": i,
                 "joined_at": now,
             }
-            for i, player in enumerate(internal_players, 1)
+            for i, player in enumerate(internal_result.data, 1)
         ]
         client.table("roster_entries").insert(roster_rows).execute()
 
