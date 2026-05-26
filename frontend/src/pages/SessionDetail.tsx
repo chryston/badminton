@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import { skillRangeLabel } from '../types'
 import type {
   Session,
   RosterEntry,
@@ -32,11 +33,6 @@ const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   verified_paid: 'Paid ✓',
 }
 
-const SKILL_LABELS: Record<string, string> = {
-  HB: 'High Beginner',
-  LI: 'Low Intermediate',
-  MB: 'Mid Beginner',
-}
 
 function playerDisplayName(entry: RosterEntry, playersById: Record<string, Player>): string {
   if (entry.player_type === 'guest') return entry.guest_name ?? 'Guest'
@@ -363,14 +359,14 @@ export function SessionDetail() {
       {/* Session info card */}
       <div className="rounded-xl bg-gray-800 border border-gray-700 p-4 mb-4 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-white font-semibold">{session.time} · {venueName}</p>
+          <p className="text-white font-semibold">{session.start_time} · {venueName}</p>
           <span className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ${STATUS_BADGE[session.status]}`}>
             {session.status}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-400">
           <span>Courts: <span className="text-gray-200">{session.courts_booked}</span></span>
-          <span>Level: <span className="text-gray-200">{SKILL_LABELS[session.skill_level]}</span></span>
+          <span>Level: <span className="text-gray-200">{skillRangeLabel(session.min_skill_level, session.max_skill_level)}</span></span>
           <span>Pub fee: <span className="text-gray-200">${session.pub_fee.toFixed(2)}</span></span>
           <span>Max pax: <span className="text-gray-200">{session.max_pax}</span></span>
         </div>
@@ -401,7 +397,7 @@ export function SessionDetail() {
             <div className="space-y-1.5 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-400">Income</span>
-                <span className="text-white">${pnl.total_income.toFixed(2)}</span>
+                <span className="text-white">${pnl.total_fees_collected.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Court cost</span>
@@ -418,7 +414,7 @@ export function SessionDetail() {
                 </span>
               </div>
               <div className="flex justify-between text-xs text-gray-500 pt-1">
-                <span>Shuttles used: {pnl.shuttles_used}</span>
+                <span>Total players: {pnl.total_roster_count}</span>
                 <span>Ext. paid: {pnl.external_paid_count}</span>
               </div>
             </div>

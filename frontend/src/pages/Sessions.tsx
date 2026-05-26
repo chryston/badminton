@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import { skillRangeLabel } from '../types'
 import type { Session, Venue } from '../types'
 
 const STATUS_BADGE: Record<string, string> = {
@@ -9,11 +10,6 @@ const STATUS_BADGE: Record<string, string> = {
   completed: 'bg-blue-900/60 text-blue-300',
 }
 
-const SKILL_LABELS: Record<string, string> = {
-  HB: 'High Beginner',
-  LI: 'Low Intermediate',
-  MB: 'Mid Beginner',
-}
 
 function SkeletonCard() {
   return (
@@ -113,10 +109,10 @@ export function Sessions() {
                     })}
                   </p>
                   <p className="text-sm text-gray-400 mt-0.5">
-                    {session.time} · {venues[session.venue_id] ?? 'Unknown Venue'}
+                    {session.start_time} · {venues[session.venue_id] ?? 'Unknown Venue'}
                   </p>
                   <p className="text-xs text-gray-500 mt-1">
-                    {SKILL_LABELS[session.skill_level]} · {session.courts_booked} courts · max {session.max_pax}
+                    {skillRangeLabel(session.min_skill_level, session.max_skill_level)} · {session.courts_booked} · max {session.max_pax}
                   </p>
                 </div>
                 <span

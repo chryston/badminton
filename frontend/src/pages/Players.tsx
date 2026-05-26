@@ -3,9 +3,13 @@ import { api } from '../lib/api'
 import type { Player, SkillLevel } from '../types'
 
 const SKILL_BADGE: Record<SkillLevel, string> = {
+  LB: 'bg-green-900/60 text-green-300',
+  MB: 'bg-orange-900/60 text-orange-300',
   HB: 'bg-purple-900/60 text-purple-300',
   LI: 'bg-blue-900/60 text-blue-300',
-  MB: 'bg-orange-900/60 text-orange-300',
+  MI: 'bg-cyan-900/60 text-cyan-300',
+  HI: 'bg-indigo-900/60 text-indigo-300',
+  A: 'bg-red-900/60 text-red-300',
 }
 
 type FilterTab = 'all' | 'members' | 'public'

@@ -1,7 +1,13 @@
-export type SkillLevel = 'HB' | 'LI' | 'MB';
+export type SkillLevel = 'LB' | 'MB' | 'HB' | 'LI' | 'MI' | 'HI' | 'A';
 export type PaymentStatus = 'unpaid' | 'pending_verification' | 'verified_paid';
 export type SessionStatus = 'internal' | 'published' | 'completed';
 export type PlayerType = 'registered' | 'guest';
+
+export const SKILL_LEVELS: SkillLevel[] = ['LB', 'MB', 'HB', 'LI', 'MI', 'HI', 'A'];
+
+export function skillRangeLabel(min: SkillLevel, max: SkillLevel): string {
+  return min === max ? min : `${min} – ${max}`;
+}
 
 export interface Player {
   id: string;
@@ -21,13 +27,33 @@ export interface Venue {
   default_pub_fee: number;
 }
 
+export interface CourtSlot {
+  id: string;
+  session_id: string;
+  court_label: string;
+  from_time: string;
+  to_time: string;
+  booker_player_id: string;
+}
+
+export interface CourtSlotCreate {
+  court_label: string;
+  from_time: string;
+  to_time: string;
+  booker_player_id: string;
+}
+
 export interface Session {
   id: string;
   date: string;
-  time: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
   venue_id: string;
-  courts_booked: number;
-  skill_level: SkillLevel;
+  courts_booked: string;
+  num_courts: number;
+  min_skill_level: SkillLevel;
+  max_skill_level: SkillLevel;
   pub_fee: number;
   max_pax: number;
   status: SessionStatus;
@@ -58,11 +84,19 @@ export interface ShuttleBatch {
   owner_label: string | null;
 }
 
+export interface BookerReimbursement {
+  player_id: string;
+  player_name: string;
+  amount: number;
+}
+
 export interface PnLResult {
-  total_income: number;
+  session_id: string;
+  total_fees_collected: number;
   court_cost: number;
   shuttle_cost: number;
   net: number;
   external_paid_count: number;
-  shuttles_used: number;
+  total_roster_count: number;
+  booker_breakdown: BookerReimbursement[];
 }

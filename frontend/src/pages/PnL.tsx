@@ -73,7 +73,7 @@ export function PnL() {
     return () => controller.abort()
   }, [])
 
-  const totalIncome = items.reduce((sum, { pnl }) => sum + pnl.total_income, 0)
+  const totalIncome = items.reduce((sum, { pnl }) => sum + pnl.total_fees_collected, 0)
   const totalCourtCost = items.reduce((sum, { pnl }) => sum + pnl.court_cost, 0)
   const totalShuttleCost = items.reduce((sum, { pnl }) => sum + pnl.shuttle_cost, 0)
   const totalNet = items.reduce((sum, { pnl }) => sum + pnl.net, 0)
@@ -154,7 +154,7 @@ export function PnL() {
                     })}
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Income ${pnl.total_income.toFixed(2)} · Costs $
+                    Income ${pnl.total_fees_collected.toFixed(2)} · Costs $
                     {(pnl.court_cost + pnl.shuttle_cost).toFixed(2)}
                   </p>
                 </div>
