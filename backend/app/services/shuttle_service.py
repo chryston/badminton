@@ -9,6 +9,14 @@ def get_all() -> list[ShuttleBatch]:
     return [ShuttleBatch(**row) for row in result.data]
 
 
+def get_by_id(batch_id: UUID) -> ShuttleBatch:
+    client = get_service_client()
+    result = client.table("shuttle_batches").select("*").eq("id", str(batch_id)).execute()
+    if not result.data:
+        raise ValueError(f"ShuttleBatch {batch_id} not found")
+    return ShuttleBatch(**result.data[0])
+
+
 def get_active() -> list[ShuttleBatch]:
     client = get_service_client()
     result = (

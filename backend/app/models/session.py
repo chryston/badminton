@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from datetime import date as _date, datetime, time as _time
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models.court_slot import CourtSlotCreate
 from app.models.shuttle import ShuttleUsage
 
-_SKILL_LEVELS = ('LB', 'MB', 'HB', 'LI', 'MI', 'HI', 'A')
+SkillLevelStr = Literal['LB', 'MB', 'HB', 'LI', 'MI', 'HI', 'A']
 
 
 class Session(BaseModel):
@@ -37,8 +37,8 @@ class SessionCreate(BaseModel):
     duration_hours: float = 2.0
     courts_booked: str
     num_courts: int = 1
-    min_skill_level: str = "LI"
-    max_skill_level: str = "MI"
+    min_skill_level: SkillLevelStr = "LI"
+    max_skill_level: SkillLevelStr = "MI"
     pub_fee: float
     max_pax: Annotated[int, Field(gt=0)] | None = None  # None → service sets num_courts × 6
     paynow_player_id: UUID | None = None
@@ -51,8 +51,8 @@ class SessionUpdate(BaseModel):
     duration_hours: float | None = None  # updating this recomputes DB end_time automatically
     courts_booked: str | None = None
     num_courts: int | None = None
-    min_skill_level: str | None = None
-    max_skill_level: str | None = None
+    min_skill_level: SkillLevelStr | None = None
+    max_skill_level: SkillLevelStr | None = None
     pub_fee: float | None = None
     max_pax: Annotated[int, Field(gt=0)] | None = None
     paynow_player_id: UUID | None = None

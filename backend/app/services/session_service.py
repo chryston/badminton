@@ -131,7 +131,16 @@ def complete(session_id: UUID, shuttle_usages: list[ShuttleUsageCreate]) -> Sess
     if existing.data[0]["status"] != "published":
         raise ValueError("Session must be published before completing")
 
-    # Deduct shuttles from batches first (raises ValueError if insufficient)
+    # Pre-flight: validate all batches have sufficient stock before touching any
+    for usage in shuttle_usages:
+        batch = shuttle_service.get_by_id(usage.batch_id)
+        if batch.remaining_count < usage.count_used:
+            raise ValueError(
+                f"Insufficient stock in batch {usage.batch_id}: "
+                f"need {usage.count_used}, have {batch.remaining_count}"
+            )
+
+    # Safe to deduct now — all checks passed
     for usage in shuttle_usages:
         shuttle_service.deduct(usage.batch_id, usage.count_used)
 
