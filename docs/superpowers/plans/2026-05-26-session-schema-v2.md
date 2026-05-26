@@ -347,6 +347,8 @@ class SessionUpdate(BaseModel):
     max_pax: Annotated[int, Field(gt=0)] | None = None
     paynow_player_id: UUID | None = None
     telegram_message_id: int | None = None
+    # Note: status is managed via dedicated /publish and /complete endpoints.
+    # shuttles_used is recorded via the /complete endpoint with ShuttleUsageCreate, not here.
 
 
 class SessionWithRoster(Session):
@@ -2141,35 +2143,100 @@ Replace with:
 {skillRangeLabel(session.min_skill_level, session.max_skill_level)} · {session.courts_booked} · max {session.max_pax}
 ```
 
-- [ ] **Step 2: Update `SessionDetail.tsx` — skill range + fix SKILL_LABELS**
+- [ ] **Step 2: Update `SessionDetail.tsx` — skill range, court slots section, booker breakdown**
 
-In `SessionDetail.tsx`, locate the `SKILL_LABELS` constant at the top and the JSX line that uses `session.skill_level`:
+In `SessionDetail.tsx`:
 
-Old constant (remove entirely):
+**2a. Fix skill level display**
+
+Remove the `SKILL_LABELS` constant at the top, add this import instead:
 ```typescript
-const SKILL_LABELS: Record<string, string> = {
-  HB: 'High Beginner',
-  LI: 'Low Intermediate',
-  MB: 'Mid Beginner',
-}
+import { skillRangeLabel, type CourtSlot } from '../types'
 ```
 
-Add the import at the top of the file imports section:
-```typescript
-import { skillRangeLabel } from '../types'
-```
-
-Find the JSX line:
+Find:
 ```tsx
 <span>Level: <span className="text-gray-200">{SKILL_LABELS[session.skill_level]}</span></span>
 ```
-
 Replace with:
 ```tsx
 <span>Level: <span className="text-gray-200">{skillRangeLabel(session.min_skill_level, session.max_skill_level)}</span></span>
 ```
 
+**2b. Add court slots state and fetch**
+
+Add a new state variable near the other `useState` declarations in `SessionDetail`:
+```typescript
+const [courtSlots, setCourtSlots] = useState<CourtSlot[]>([])
+```
+
+Inside the existing `load()` function (or equivalent `useEffect` that fetches session data), add the court slots fetch alongside the session fetch:
+```typescript
+const [sessionData, courtSlotData] = await Promise.all([
+  api.get<SessionWithRoster>(`/api/v1/sessions/${id}`),
+  api.get<CourtSlot[]>(`/api/v1/sessions/${id}/court-slots`),
+])
+// ... existing session state setters ...
+setCourtSlots(courtSlotData)
+```
+
+**2c. Add Court Slots section in the JSX**
+
+Find the closing section of the session detail info panel (just before or after the roster section). Add:
+
+```tsx
+{/* Court Slots */}
+<section className="rounded-xl bg-gray-800 p-4 border border-gray-700">
+  <h2 className="text-lg font-semibold text-white mb-3">Court Slots</h2>
+  {courtSlots.length === 0 ? (
+    <p className="text-gray-500 text-sm">No court slots recorded.</p>
+  ) : (
+    <table className="w-full text-sm text-gray-300">
+      <thead>
+        <tr className="text-gray-500 text-xs border-b border-gray-700">
+          <th className="text-left pb-2">Court</th>
+          <th className="text-left pb-2">From</th>
+          <th className="text-left pb-2">To</th>
+          <th className="text-left pb-2">Booker</th>
+        </tr>
+      </thead>
+      <tbody>
+        {courtSlots.map((slot) => (
+          <tr key={slot.id} className="border-b border-gray-700/50">
+            <td className="py-1.5">{slot.court_label}</td>
+            <td className="py-1.5">{slot.from_time.slice(0, 5)}</td>
+            <td className="py-1.5">{slot.to_time.slice(0, 5)}</td>
+            <td className="py-1.5">{players[slot.booker_player_id]?.name ?? slot.booker_player_id.slice(0, 8)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</section>
+```
+
+Note: `players` is the existing `playersById` map already fetched by `SessionDetail`. Use whichever variable name holds the `Record<string, Player>` lookup in the component.
+
+**2d. Show booker breakdown in the P&L section**
+
+In `SessionDetail`, locate the P&L display block. After the existing cost lines, add:
+```tsx
+{pnl.booker_breakdown.length > 0 && (
+  <div className="mt-3 border-t border-gray-700 pt-3">
+    <p className="text-xs font-medium text-gray-400 mb-1">Court reimbursements</p>
+    {pnl.booker_breakdown.map((b) => (
+      <div key={b.player_id} className="flex justify-between text-sm text-gray-300">
+        <span>{b.player_name}</span>
+        <span>${b.amount.toFixed(2)}</span>
+      </div>
+    ))}
+  </div>
+)}
+```
+
 - [ ] **Step 3: Update `PnL.tsx` — fix field name + show booker breakdown**
+
+> **Why `total_fees_collected`:** The backend `PnLResult` model has always used `total_fees_collected` (per the spec §7). The frontend `PnLResult` type had a pre-existing bug using `total_income`. This step fixes the frontend to match the correct API field name.
 
 In `PnL.tsx`, find all occurrences of `pnl.total_income` and replace with `pnl.total_fees_collected`:
 
@@ -2223,8 +2290,9 @@ Expected: All tests PASS
 git add frontend/src/pages/Sessions.tsx frontend/src/pages/SessionDetail.tsx frontend/src/pages/PnL.tsx
 git commit -m "feat: update frontend pages for session schema v2
 
-- Sessions/SessionDetail: show min–max skill range via skillRangeLabel()
-- PnL: fix total_income → total_fees_collected; show booker_breakdown table"
+- Sessions: show min–max skill range via skillRangeLabel()
+- SessionDetail: skill range; court slots table (read-only); booker_breakdown in P&L section
+- PnL: fix total_income → total_fees_collected; show booker_breakdown card"
 ```
 
 ---
@@ -2266,6 +2334,8 @@ Checklist:
 - [ ] `POST /api/v1/sessions` returns 201 (no 422)
 - [ ] `end_time` in response is correctly computed (start_time + duration_hours)
 - [ ] `GET /api/v1/sessions/{id}/pnl` returns `booker_breakdown` list
+- [ ] `GET /api/v1/sessions/{id}/court-slots` returns slot list
 - [ ] Telegram announcement shows `🎯 Level: LI – MI`
 - [ ] NewSession form renders: day auto-fills, end time auto-fills, court slots table present
 - [ ] Sessions list shows skill range (e.g. `LI – MI`)
+- [ ] SessionDetail shows court slots table and booker breakdown in P&L
