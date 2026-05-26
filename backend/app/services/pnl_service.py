@@ -10,7 +10,6 @@ from app.models.shuttle import ShuttleBatch
 import app.services.court_slot_service as court_slot_service
 import app.services.session_service as session_service
 import app.services.venue_service as venue_service
-import app.services.shuttle_service as shuttle_service
 
 
 def calculate(
