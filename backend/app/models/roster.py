@@ -9,7 +9,7 @@ class RosterEntry(BaseModel):
     player_id: UUID | None = None
     guest_name: str | None = None
     player_type: str  # registered | guest
-    payment_status: str  # unpaid | verified_paid
+    payment_status: str  # unpaid | pending_verification | verified_paid
     is_waitlisted: bool = False
     position: int
     joined_at: datetime
@@ -24,6 +24,12 @@ class RosterEntryCreate(BaseModel):
     guest_name: str  # for manually adding external players
 
 
+class BookerReimbursement(BaseModel):
+    player_id: UUID
+    player_name: str
+    amount: float
+
+
 class PnLResult(BaseModel):
     session_id: UUID
     total_fees_collected: float
@@ -32,3 +38,4 @@ class PnLResult(BaseModel):
     net: float
     external_paid_count: int
     total_roster_count: int
+    booker_breakdown: list[BookerReimbursement] = []
