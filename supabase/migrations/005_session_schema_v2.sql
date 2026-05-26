@@ -61,13 +61,13 @@ BEGIN
     ) AND EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'sessions' AND column_name = 'end_time'
+          AND is_generated = 'NEVER'
     ) THEN
         UPDATE sessions
         SET duration_hours = EXTRACT(EPOCH FROM (end_time - start_time)) / 3600
         WHERE duration_hours = 2.0
           AND start_time IS NOT NULL
-          AND end_time IS NOT NULL
-          AND is_generated = 'NEVER';
+          AND end_time IS NOT NULL;
     END IF;
 END $$;
 
