@@ -33,7 +33,7 @@ def format_session_announcement(
         f"📅 {date_str} {time_str}",
         f"📍 {venue_name}",
         f"🏟️ Courts: {session.courts_booked}",
-        f"🎯 Level: {session.skill_level}",
+        _skill_range_label(session.min_skill_level, session.max_skill_level),
         f"💰 Fee: ${session.pub_fee:.0f} per pax",
         f"👤 Max: {session.max_pax} players",
         "",
@@ -91,3 +91,9 @@ def _entry_display_name(entry: RosterEntry, player_names: dict[UUID, str]) -> st
     if entry.player_id and entry.player_id in player_names:
         return player_names[entry.player_id]
     return "Unknown"
+
+
+def _skill_range_label(min_level: str, max_level: str) -> str:
+    if min_level == max_level:
+        return f"🎯 Level: {min_level}"
+    return f"🎯 Level: {min_level} – {max_level}"
