@@ -753,7 +753,7 @@ export function SessionDetail() {
                 {cancelling ? 'Cancelling…' : 'Confirm Cancel'}
               </button>
               <button
-                onClick={() => { setShowCancelModal(false); setCancelError(null) }}
+                onClick={() => { setShowCancelModal(false); setCancelError(null); setCancelReason('') }}
                 className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
               >
                 Back
