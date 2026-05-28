@@ -1,6 +1,6 @@
 import asyncio
 from uuid import UUID
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, HTTPException
 from app.dependencies import require_admin
 from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster, CancelRequest
 from app.models.shuttle import ShuttleUsageCreate
@@ -48,8 +48,7 @@ async def complete_session(
 ):
     session_before = session_service.get_by_id(session_id)
     result = session_service.complete(session_id, shuttle_usages)
-    if session_before is not None:
-        asyncio.create_task(bot_runner.delete_session_message(session_before))
+    asyncio.create_task(bot_runner.delete_session_message(session_before))
     return result
 
 
@@ -68,6 +67,8 @@ async def cancel_session(
 async def recruit_players(session_id: UUID, _=Depends(require_admin)):
     """Generate a recruit message, send it to the admin group, and return the text."""
     session = session_service.get_by_id(session_id)
+    if session.status != "published":
+        raise HTTPException(status_code=400, detail="Session must be published to recruit players")
     venue = venue_service.get_by_id(session.venue_id)
     roster = roster_service.get_session_roster(session_id)
     active_count = sum(1 for e in roster if not e.is_waitlisted)
