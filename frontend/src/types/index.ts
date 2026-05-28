@@ -100,3 +100,15 @@ export interface PnLResult {
   total_roster_count: number;
   booker_breakdown: BookerReimbursement[];
 }
+
+export interface FundEntry {
+  id: string
+  description: string
+  amount: number  // positive = income; negative = expense
+  created_at: string
+}
+
+export interface FundBalance {
+  entries: FundEntry[]
+  entries_total: number
+}

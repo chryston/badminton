@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
-import type { Session, PnLResult, Venue } from '../types'
+import type { Session, PnLResult, Venue, FundBalance } from '../types'
 
 // TODO: This page makes N+1 API calls (one per completed session) to fetch P&L.
 // A future improvement would be a dedicated /api/v1/pnl/summary endpoint that
@@ -32,18 +32,24 @@ export function PnL() {
   const [venues, setVenues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [fund, setFund] = useState<FundBalance | null>(null)
+  const [newEntryDesc, setNewEntryDesc] = useState('')
+  const [newEntryAmount, setNewEntryAmount] = useState('')
+  const [addingEntry, setAddingEntry] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
     async function load(signal: AbortSignal) {
       try {
-        const [allSessions, venueList] = await Promise.all([
+        const [allSessions, venueList, fundBalance] = await Promise.all([
           api.get<Session[]>('/api/v1/sessions', signal),
           api.get<Venue[]>('/api/v1/venues', signal),
+          api.get<FundBalance>('/api/v1/fund/balance', signal),
         ])
         const venueMap: Record<string, string> = {}
         for (const v of venueList) venueMap[v.id] = v.name
         setVenues(venueMap)
+        setFund(fundBalance)
 
         const completed = allSessions.filter(s => s.status === 'completed')
         completed.sort((a, b) => (a.date < b.date ? 1 : -1))
@@ -78,6 +84,21 @@ export function PnL() {
   const totalShuttleCost = items.reduce((sum, { pnl }) => sum + pnl.shuttle_cost, 0)
   const totalNet = items.reduce((sum, { pnl }) => sum + pnl.net, 0)
 
+  async function handleAddFundEntry() {
+    const amount = parseFloat(newEntryAmount)
+    if (!newEntryDesc.trim() || isNaN(amount)) return
+    setAddingEntry(true)
+    try {
+      await api.post('/api/v1/fund/entries', { description: newEntryDesc.trim(), amount })
+      const updated = await api.get<FundBalance>('/api/v1/fund/balance')
+      setFund(updated)
+      setNewEntryDesc('')
+      setNewEntryAmount('')
+    } finally {
+      setAddingEntry(false)
+    }
+  }
+
   return (
     <div className="p-4">
       <h1 className="text-xl font-bold text-white mb-4">Profit &amp; Loss</h1>
@@ -87,6 +108,59 @@ export function PnL() {
           {error}
         </p>
       )}
+
+      {/* Fund Balance Section */}
+      {loading ? (
+        <div className="rounded-xl bg-gray-800 p-4 animate-pulse border border-gray-700 mb-6">
+          <div className="h-4 w-40 bg-gray-700 rounded mb-2" />
+          <div className="h-3 w-28 bg-gray-700 rounded" />
+        </div>
+      ) : fund ? (
+        <div className="rounded-xl bg-gray-800 border border-gray-700 p-4 mb-6">
+          <h2 className="font-semibold text-white mb-3">💰 Fund Balance</h2>
+          <div className="space-y-1 mb-3">
+            {fund.entries.map(entry => (
+              <div key={entry.id} className="flex justify-between text-sm text-gray-300">
+                <span>{entry.description}</span>
+                <span className={entry.amount >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {entry.amount >= 0 ? '+' : ''}${entry.amount.toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between font-semibold text-white border-t border-gray-600 pt-2 mb-3">
+            <span>Manual Entries Total</span>
+            <span className={fund.entries_total >= 0 ? 'text-green-400' : 'text-red-400'}>
+              {fund.entries_total >= 0 ? '+' : ''}${fund.entries_total.toFixed(2)}
+            </span>
+          </div>
+          {/* Add new entry form */}
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded bg-gray-700 border border-gray-600 px-2 py-1 text-sm text-white placeholder-gray-400"
+              placeholder="Description (e.g. Opening balance)"
+              value={newEntryDesc}
+              onChange={e => setNewEntryDesc(e.target.value)}
+            />
+            <input
+              className="w-24 rounded bg-gray-700 border border-gray-600 px-2 py-1 text-sm text-white placeholder-gray-400"
+              placeholder="Amount"
+              type="number"
+              step="0.01"
+              value={newEntryAmount}
+              onChange={e => setNewEntryAmount(e.target.value)}
+            />
+            <button
+              className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              disabled={addingEntry || !newEntryDesc.trim() || !newEntryAmount}
+              onClick={handleAddFundEntry}
+            >
+              Add
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">Note: shuttle batch purchases are auto-recorded when added in Inventory. Use this form for opening balance (e.g. +$200) or manual adjustments (e.g. court deposit: −$80).</p>
+        </div>
+      ) : null}
 
       {/* Overall summary card */}
       {!loading && items.length > 0 && (
