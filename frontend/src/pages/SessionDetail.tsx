@@ -182,6 +182,11 @@ export function SessionDetail() {
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
 
+  const [recruitMessage, setRecruitMessage] = useState<string | null>(null)
+  const [recruiting, setRecruiting] = useState(false)
+  const [recruitError, setRecruitError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
   const loadRoster = useCallback(async () => {
     if (!id) return
     const entries = await api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`)
@@ -337,6 +342,27 @@ export function SessionDetail() {
     } finally {
       setAddingGuest(false)
     }
+  }
+
+  async function handleGenerateRecruit() {
+    if (!session) return
+    setRecruiting(true)
+    setRecruitError(null)
+    try {
+      const res = await api.post<{ message: string }>(`/api/v1/sessions/${session.id}/recruit`, {})
+      setRecruitMessage(res.message)
+    } catch (err) {
+      setRecruitError(err instanceof Error ? err.message : 'Failed to generate message')
+    } finally {
+      setRecruiting(false)
+    }
+  }
+
+  async function handleCopyRecruit() {
+    if (!recruitMessage) return
+    await navigator.clipboard.writeText(recruitMessage)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   function openEdit() {
@@ -575,6 +601,18 @@ export function SessionDetail() {
             🚫 Cancel Session
           </button>
         )}
+        {session.status === 'published' && (
+          <button
+            onClick={handleGenerateRecruit}
+            disabled={recruiting}
+            className="rounded-lg bg-purple-700 px-4 py-2 text-sm text-white hover:bg-purple-600 disabled:opacity-50"
+          >
+            {recruiting ? 'Generating…' : '📣 Recruit Players'}
+          </button>
+        )}
+        {recruitError && (
+          <p className="text-sm text-red-400">{recruitError}</p>
+        )}
         {session.status === 'completed' && pnl && (
           <div className="rounded-xl bg-gray-800 border border-gray-700 p-4">
             <h2 className="text-white font-semibold mb-3">P&amp;L Summary</h2>
@@ -764,6 +802,33 @@ export function SessionDetail() {
                 className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
               >
                 Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recruit Message Modal */}
+      {recruitMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-gray-800 border border-gray-600 p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-white mb-3">📣 Recruit Message</h3>
+            <p className="text-xs text-gray-400 mb-2">Sent to admin group. Copy and share as needed.</p>
+            <pre className="rounded bg-gray-900 p-3 text-sm text-gray-200 whitespace-pre-wrap mb-4 border border-gray-700">
+              {recruitMessage}
+            </pre>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCopyRecruit}
+                className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500"
+              >
+                {copied ? '✅ Copied!' : '📋 Copy'}
+              </button>
+              <button
+                onClick={() => { setRecruitMessage(null); setCopied(false) }}
+                className="rounded bg-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+              >
+                Close
               </button>
             </div>
           </div>
