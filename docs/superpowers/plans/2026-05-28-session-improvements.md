@@ -1,0 +1,1356 @@
+# Session Improvements Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Fix 9 session management improvements: empty roster on create, inline session editing, skill level defaults, verify-any-payment, cancel session with bot notification, loading spinner, Telegram court label, 422 complete-session fix, and internal players auto-verified at $0.
+
+**Architecture:** Backend fixes are isolated to model/service/router/bot layers; frontend fixes are in SessionDetail.tsx and Sessions.tsx. One new DB migration adds `cancelled` status. No new DB tables.
+
+**Tech Stack:** FastAPI + Pydantic v2, Supabase (PostgreSQL), React + TypeScript + Tailwind, python-telegram-bot
+
+**Spec:** `docs/superpowers/specs/2026-05-28-session-improvements-design.md`
+
+---
+
+## Wave execution order
+
+| Wave | Tasks (parallel) | Depends on |
+|------|-----------------|------------|
+| 1 | Task 1 (DB + backend models/services), Task 2 (frontend types + simple fixes) | — |
+| 2 | Task 3 (cancel backend), Task 4 (frontend edit) | Task 1 |
+| 3 | Task 5 (bot formatter + cancel), Task 6 (frontend cancel UI) | Task 3 |
+| 4 | Task 7 (E2E test) | All |
+
+---
+
+## Task 1: DB migration + backend model/service fixes
+
+**Items covered:** 1 (empty roster), 3 (skill defaults), 9 (auto-pay internal), DB (cancelled status + payment_status constraint)
+
+**Files:**
+- Create: `supabase/migrations/006_add_cancelled_status.sql`
+- Modify: `backend/app/models/session.py`
+- Modify: `backend/app/services/session_service.py`
+- Modify: `backend/app/services/roster_service.py`
+- Test: `backend/tests/test_roster_service.py` (new file)
+
+---
+
+- [ ] **Step 1: Write failing tests for roster_service internal-player auto-pay**
+
+Create `backend/tests/test_roster_service.py`:
+
+```python
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
+from app.services import roster_service
+from app.models.player import Player
+from app.models.roster import RosterEntry
+from datetime import datetime, timezone
+
+
+def _make_player(is_internal: bool) -> Player:
+    return Player(
+        id=uuid4(),
+        name="Test Player",
+        skill_level="LI",
+        phone=None,
+        is_internal=is_internal,
+        telegram_id=123456,
+        notes=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_db_client(active_count: int = 0, max_pax: int = 12):
+    """Build a minimal mock DB client for roster operations."""
+    builder = MagicMock()
+    builder.execute.return_value.data = []
+    # session select → max_pax
+    session_result = MagicMock()
+    session_result.data = [{"max_pax": max_pax}]
+    # existing roster check → empty (player not already on roster)
+    empty_result = MagicMock()
+    empty_result.data = []
+    # active count result
+    count_result = MagicMock()
+    count_result.data = [{"id": str(uuid4())} for _ in range(active_count)]
+    # position query → no existing entries
+    pos_result = MagicMock()
+    pos_result.data = []
+    # insert result
+    now = datetime.now(timezone.utc).isoformat()
+    insert_result = MagicMock()
+    insert_result.data = [{
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "player_id": str(uuid4()),
+        "guest_name": None,
+        "player_type": "registered",
+        "payment_status": "unpaid",
+        "is_waitlisted": False,
+        "position": 1,
+        "joined_at": now,
+        "created_at": now,
+    }]
+
+    client = MagicMock()
+    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        session_result,   # session max_pax
+        empty_result,     # existing roster check
+        count_result,     # active count (for is_waitlisted)
+        pos_result,       # position query
+    ]
+    client.table.return_value.insert.return_value.execute.return_value = insert_result
+    return client
+
+
+def test_external_player_added_as_unpaid():
+    """External players join with payment_status='unpaid'."""
+    player = _make_player(is_internal=False)
+    client = _make_db_client()
+    with (
+        patch("app.services.roster_service.get_service_client", return_value=client),
+        patch("app.services.player_service.get_by_telegram_id", return_value=None),
+        patch("app.services.player_service.create", return_value=player),
+        patch("app.services.roster_service.get_active_count", return_value=0),
+    ):
+        entry, _ = roster_service.add_player(uuid4(), 123456, "External Player")
+    inserted_row = client.table.return_value.insert.call_args[0][0]
+    assert inserted_row["payment_status"] == "unpaid"
+
+
+def test_internal_player_auto_marked_verified_paid():
+    """Internal players are automatically marked verified_paid when they join."""
+    player = _make_player(is_internal=True)
+    client = _make_db_client()
+    with (
+        patch("app.services.roster_service.get_service_client", return_value=client),
+        patch("app.services.player_service.get_by_telegram_id", return_value=None),
+        patch("app.services.player_service.create", return_value=player),
+        patch("app.services.roster_service.get_active_count", return_value=0),
+    ):
+        roster_service.add_player(uuid4(), 123456, "Internal Player")
+    inserted_row = client.table.return_value.insert.call_args[0][0]
+    assert inserted_row["payment_status"] == "verified_paid"
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+cd backend && python -m pytest tests/test_roster_service.py -v
+```
+
+Expected: `FAILED test_internal_player_auto_marked_verified_paid` (current code always sets `"unpaid"`)
+
+- [ ] **Step 3: Write DB migration**
+
+Create `supabase/migrations/006_add_cancelled_status.sql`:
+
+```sql
+-- Migration 006: Add cancelled session status and fix payment_status constraint
+
+-- ── 1. Expand sessions.status to include 'cancelled' ─────────────────────────
+ALTER TABLE sessions
+    DROP CONSTRAINT IF EXISTS sessions_status_check,
+    ADD  CONSTRAINT sessions_status_check
+        CHECK (status IN ('internal', 'published', 'completed', 'cancelled'));
+
+-- ── 2. Fix roster_entries.payment_status to include 'pending_verification' ───
+--      (001_schema.sql only had unpaid/verified_paid — inconsistent with app)
+ALTER TABLE roster_entries
+    DROP CONSTRAINT IF EXISTS roster_entries_payment_status_check,
+    ADD  CONSTRAINT roster_entries_payment_status_check
+        CHECK (payment_status IN ('unpaid', 'pending_verification', 'verified_paid'));
+```
+
+- [ ] **Step 4: Update backend/app/models/session.py — change defaults + add venue_id to SessionUpdate**
+
+In `SessionCreate`, change defaults:
+```python
+min_skill_level: SkillLevelStr = "HB"   # was "LI"
+max_skill_level: SkillLevelStr = "LI"   # was "MI"
+```
+
+In `SessionUpdate`, add `venue_id` field after the existing fields:
+```python
+class SessionUpdate(BaseModel):
+    venue_id: UUID | None = None          # ← ADD THIS
+    date: _date | None = None
+    start_time: _time | None = None
+    duration_hours: float | None = None
+    courts_booked: str | None = None
+    num_courts: int | None = None
+    min_skill_level: SkillLevelStr | None = None
+    max_skill_level: SkillLevelStr | None = None
+    pub_fee: float | None = None
+    max_pax: Annotated[int, Field(gt=0)] | None = None
+    paynow_player_id: UUID | None = None
+    telegram_message_id: int | None = None
+```
+
+- [ ] **Step 5: Update backend/app/services/session_service.py — remove auto-populate roster**
+
+In `create()`, delete the entire block that auto-populates internal players (lines ~62–77):
+
+```python
+# DELETE this entire block:
+internal_result = (
+    client.table("players").select("*").eq("is_internal", True).order("name").execute()
+)
+if internal_result.data:
+    now = datetime.now(timezone.utc).isoformat()
+    roster_rows = [...]
+    client.table("roster_entries").insert(roster_rows).execute()
+```
+
+Also remove the unused `datetime` import from `session_service.py` if it's only used there (check first).
+
+- [ ] **Step 6: Update backend/app/services/roster_service.py — internal player auto-pay**
+
+In `add_player()`, find the `row` dict construction and change payment_status:
+
+```python
+# Find the player's is_internal flag before building the row.
+# player is already fetched above via player_service.get_by_telegram_id / player_service.create
+
+row = {
+    "session_id": str(session_id),
+    "player_id": str(player.id),
+    "player_type": "registered",
+    "payment_status": "verified_paid" if player.is_internal else "unpaid",  # ← CHANGE
+    "is_waitlisted": is_waitlisted,
+    "position": next_position,
+    "joined_at": now,
+}
+```
+
+- [ ] **Step 7: Run tests to confirm both pass**
+
+```bash
+cd backend && python -m pytest tests/test_roster_service.py -v
+```
+
+Expected: `PASSED test_external_player_added_as_unpaid`, `PASSED test_internal_player_auto_marked_verified_paid`
+
+- [ ] **Step 8: Update NewSession.tsx skill level defaults**
+
+In `frontend/src/pages/NewSession.tsx`, change initial state:
+
+```tsx
+const [minSkill, setMinSkill] = useState<SkillLevel>('HB')  // was 'LI'
+const [maxSkill, setMaxSkill] = useState<SkillLevel>('LI')  // was 'MI'
+```
+
+- [ ] **Step 9: Verify frontend builds**
+
+```bash
+cd frontend && npm run build
+```
+
+Expected: `✓ built` with no TypeScript errors.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add supabase/migrations/006_add_cancelled_status.sql \
+        backend/app/models/session.py \
+        backend/app/services/session_service.py \
+        backend/app/services/roster_service.py \
+        backend/tests/test_roster_service.py \
+        frontend/src/pages/NewSession.tsx
+git commit -m "feat: empty roster on create, HB/LI defaults, internal player auto-pay"
+```
+
+---
+
+## Task 2: Frontend types + simple fixes
+
+**Items covered:** 4 (verify-any-player), 6 (spinner fix), 8 (422 fix), types for cancelled status
+
+**Files:**
+- Modify: `frontend/src/types/index.ts`
+- Modify: `frontend/src/pages/SessionDetail.tsx`
+- Modify: `frontend/src/pages/Sessions.tsx`
+
+---
+
+- [ ] **Step 1: Update frontend/src/types/index.ts — add 'cancelled' to SessionStatus**
+
+```typescript
+export type SessionStatus = 'internal' | 'published' | 'completed' | 'cancelled';
+```
+
+No other type changes needed for this task.
+
+- [ ] **Step 2: Fix 422 — rename quantity → count_used in ShuttleModal + unwrap body**
+
+In `frontend/src/pages/SessionDetail.tsx`:
+
+1. Change the `onConfirm` prop type signature (line ~63):
+```tsx
+onConfirm: (usages: { batch_id: string; count_used: number }[]) => Promise<void>
+```
+
+2. In `ShuttleModal.handleSubmit` (line ~79-81), change the map:
+```tsx
+const usages = Object.entries(quantities)
+  .filter(([, qty]) => qty > 0)
+  .map(([batch_id, qty]) => ({ batch_id, count_used: qty }))  // was: quantity: qty
+```
+
+3. In `handleComplete` (line ~243-245), unwrap the body:
+```tsx
+async function handleComplete(usages: { batch_id: string; count_used: number }[]) {
+  if (!id) return
+  const updated = await api.post<Session>(`/api/v1/sessions/${id}/complete`, usages)  // was: { shuttle_usages: usages }
+```
+
+- [ ] **Step 3: Fix loading spinner — reset state in useEffect when id changes**
+
+In `SessionDetail.tsx`, at the start of the `useEffect` (before the `async function load` declaration), add state resets:
+
+```tsx
+useEffect(() => {
+  if (!id) return
+  setLoading(true)    // ← ADD
+  setSession(null)    // ← ADD
+  setError(null)      // ← ADD
+  const controller = new AbortController()
+  async function load(signal: AbortSignal) {
+    // ... existing code unchanged
+  }
+  load(controller.signal)
+  return () => controller.abort()
+}, [id])
+```
+
+- [ ] **Step 4: Fix verify button — show for all non-verified entries**
+
+In `RosterRow` component (around line ~570-590), change the condition that shows the Verify button:
+
+```tsx
+// Before:
+{entry.payment_status === 'pending_verification' && (
+  <button onClick={() => onVerify(entry.id)} disabled={verifying}>
+    Verify ✓
+  </button>
+)}
+
+// After:
+{entry.payment_status !== 'verified_paid' && (
+  <button onClick={() => onVerify(entry.id)} disabled={verifying}
+    className="rounded-lg bg-green-800 px-2 py-1 text-xs font-medium text-green-200 hover:bg-green-700 disabled:opacity-50">
+    Verify ✓
+  </button>
+)}
+```
+
+- [ ] **Step 5: Add 'cancelled' badge to Sessions.tsx and SessionDetail.tsx**
+
+In `Sessions.tsx`, update `STATUS_BADGE`:
+```tsx
+const STATUS_BADGE: Record<string, string> = {
+  internal: 'bg-gray-700 text-gray-300',
+  published: 'bg-green-900/60 text-green-300',
+  completed: 'bg-blue-900/60 text-blue-300',
+  cancelled: 'bg-red-900/60 text-red-300',   // ← ADD
+}
+```
+
+In `SessionDetail.tsx`, update `STATUS_BADGE`:
+```tsx
+const STATUS_BADGE: Record<SessionStatus, string> = {
+  internal: 'bg-gray-700 text-gray-300',
+  published: 'bg-green-900/60 text-green-300',
+  completed: 'bg-blue-900/60 text-blue-300',
+  cancelled: 'bg-red-900/60 text-red-300',   // ← ADD
+}
+```
+
+- [ ] **Step 6: Verify frontend builds**
+
+```bash
+cd frontend && npm run build
+```
+
+Expected: `✓ built` with no TypeScript errors.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend/src/types/index.ts \
+        frontend/src/pages/SessionDetail.tsx \
+        frontend/src/pages/Sessions.tsx
+git commit -m "fix: 422 complete session, loading spinner, verify-any-player, cancelled badge"
+```
+
+---
+
+## Task 3: Cancel session backend
+
+**Items covered:** 5 (cancel endpoint)
+
+**Files:**
+- Modify: `backend/app/models/session.py`
+- Modify: `backend/app/services/session_service.py`
+- Modify: `backend/app/routers/sessions.py`
+- Test: `backend/tests/test_session_service.py` (new file)
+
+**Depends on:** Task 1 (migration must include 'cancelled' status)
+
+---
+
+- [ ] **Step 1: Write failing test for cancel service**
+
+Create `backend/tests/test_session_service.py`:
+
+```python
+from unittest.mock import MagicMock
+from uuid import uuid4
+from app.services import session_service
+from app.models.session import Session
+from datetime import date, time, datetime, timezone
+
+
+def _make_session_row(status: str = "published") -> dict:
+    sid = str(uuid4())
+    return {
+        "id": sid,
+        "venue_id": str(uuid4()),
+        "date": "2026-06-01",
+        "start_time": "20:00:00",
+        "end_time": "22:00:00",
+        "duration_hours": 2.0,
+        "courts_booked": "3 & 4",
+        "num_courts": 2,
+        "min_skill_level": "HB",
+        "max_skill_level": "LI",
+        "pub_fee": 12.0,
+        "max_pax": 12,
+        "status": status,
+        "telegram_message_id": None,
+        "paynow_player_id": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _make_db_client(session_row: dict):
+    client = MagicMock()
+    builder = MagicMock()
+    builder.execute.return_value.data = [session_row]
+    client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        session_row
+    ]
+    client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
+        {**session_row, "status": "cancelled"}
+    ]
+    return client
+
+
+def test_cancel_published_session():
+    """Cancelling a published session sets status to cancelled."""
+    row = _make_session_row("published")
+    client = _make_db_client(row)
+    session_id = uuid4()
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "app.services.session_service.get_service_client", return_value=client
+    ):
+        result = session_service.cancel(session_id, "Not enough players")
+    assert result.status == "cancelled"
+
+
+def test_cancel_internal_session():
+    """Cancelling an internal session also works."""
+    row = _make_session_row("internal")
+    client = _make_db_client(row)
+    session_id = uuid4()
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "app.services.session_service.get_service_client", return_value=client
+    ):
+        result = session_service.cancel(session_id, "Venue unavailable")
+    assert result.status == "cancelled"
+
+
+def test_cannot_cancel_completed_session():
+    """Completed sessions cannot be cancelled."""
+    row = _make_session_row("completed")
+    client = _make_db_client(row)
+    session_id = uuid4()
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "app.services.session_service.get_service_client", return_value=client
+    ):
+        try:
+            session_service.cancel(session_id, "reason")
+            assert False, "Expected ValueError"
+        except ValueError as e:
+            assert "completed" in str(e).lower()
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+cd backend && python -m pytest tests/test_session_service.py -v
+```
+
+Expected: `AttributeError: module ... has no attribute 'cancel'`
+
+- [ ] **Step 3: Add CancelRequest model to backend/app/models/session.py**
+
+Add at the end of `session.py`:
+
+```python
+class CancelRequest(BaseModel):
+    reason: str
+```
+
+- [ ] **Step 4: Add cancel() to backend/app/services/session_service.py**
+
+Add after the `complete()` function:
+
+```python
+def cancel(session_id: UUID, reason: str) -> Session:
+    client = get_service_client()
+    existing = client.table("sessions").select("status").eq("id", str(session_id)).execute()
+    if not existing.data:
+        raise ValueError(f"Session {session_id} not found")
+    current_status = existing.data[0]["status"]
+    if current_status in ("completed", "cancelled"):
+        raise ValueError(f"Cannot cancel a {current_status} session")
+    result = (
+        client.table("sessions")
+        .update({"status": "cancelled"})
+        .eq("id", str(session_id))
+        .execute()
+    )
+    return Session(**result.data[0])
+```
+
+Note: `reason` is passed to the bot by the router — `cancel()` itself only updates the DB. The router triggers the bot notification after calling this.
+
+- [ ] **Step 5: Run tests to confirm they pass**
+
+```bash
+cd backend && python -m pytest tests/test_session_service.py -v
+```
+
+Expected: all 3 tests pass.
+
+- [ ] **Step 6: Add cancel endpoint to backend/app/routers/sessions.py**
+
+Add these imports at the top:
+```python
+from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster, CancelRequest
+```
+
+Add the endpoint after the `complete` endpoint:
+
+```python
+@router.post("/{session_id}/cancel", response_model=Session)
+async def cancel_session(
+    session_id: UUID,
+    body: CancelRequest,
+    _=Depends(require_admin),
+):
+    session = session_service.cancel(session_id, body.reason)
+    asyncio.create_task(bot_runner.post_cancellation_message(session_id, body.reason))
+    return session
+```
+
+Note: `bot_runner.post_cancellation_message` is added in Task 5. For now, reference it — the import will resolve after Task 5 is done.
+
+- [ ] **Step 7: Verify backend starts without import errors**
+
+```bash
+cd backend && python -c "from app.routers.sessions import router; print('OK')"
+```
+
+Expected: `OK` (or `AttributeError: module...has no attribute 'post_cancellation_message'` — that's fine; it will be resolved in Task 5).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backend/app/models/session.py \
+        backend/app/services/session_service.py \
+        backend/app/routers/sessions.py \
+        backend/tests/test_session_service.py
+git commit -m "feat: cancel session endpoint with reason"
+```
+
+---
+
+## Task 4: Frontend inline edit session
+
+**Items covered:** 2 (edit session)
+
+**Files:**
+- Modify: `frontend/src/pages/SessionDetail.tsx`
+
+**Depends on:** Task 1 (venue_id in SessionUpdate backend model)
+
+---
+
+- [ ] **Step 1: Add edit state variables to SessionDetail component**
+
+Below the existing state declarations (around line ~167), add:
+
+```tsx
+const [editing, setEditing] = useState(false)
+const [editError, setEditError] = useState<string | null>(null)
+const [saving, setSaving] = useState(false)
+// Edit form state — pre-populated when edit mode opens
+const [editDate, setEditDate] = useState('')
+const [editStartTime, setEditStartTime] = useState('')
+const [editDuration, setEditDuration] = useState(2)
+const [editVenueId, setEditVenueId] = useState('')
+const [editCourtsBooked, setEditCourtsBooked] = useState('')
+const [editNumCourts, setEditNumCourts] = useState(1)
+const [editMinSkill, setEditMinSkill] = useState<SkillLevel>('HB')
+const [editMaxSkill, setEditMaxSkill] = useState<SkillLevel>('LI')
+const [editPubFee, setEditPubFee] = useState(0)
+const [editMaxPax, setEditMaxPax] = useState(12)
+const [editPaynowId, setEditPaynowId] = useState<string>('')
+const [venues, setVenues] = useState<Venue[]>([])
+```
+
+Note: `venues` may already exist as a state or local variable — check and merge if needed.
+
+- [ ] **Step 2: Add openEdit handler to pre-populate form**
+
+Add this function after the `loadPnl` callback:
+
+```tsx
+function openEdit() {
+  if (!session) return
+  setEditDate(session.date)
+  setEditStartTime(session.start_time.slice(0, 5))  // "HH:MM"
+  setEditDuration(session.duration_hours)
+  setEditVenueId(session.venue_id)
+  setEditCourtsBooked(session.courts_booked)
+  setEditNumCourts(session.num_courts)
+  setEditMinSkill(session.min_skill_level as SkillLevel)
+  setEditMaxSkill(session.max_skill_level as SkillLevel)
+  setEditPubFee(session.pub_fee)
+  setEditMaxPax(session.max_pax)
+  setEditPaynowId(session.paynow_player_id ?? '')
+  setEditing(true)
+}
+```
+
+- [ ] **Step 3: Add handleSaveEdit function**
+
+```tsx
+async function handleSaveEdit() {
+  if (!id) return
+  setSaving(true)
+  setEditError(null)
+  try {
+    const payload: Record<string, unknown> = {
+      venue_id: editVenueId || undefined,
+      date: editDate,
+      start_time: editStartTime + ':00',
+      duration_hours: editDuration,
+      courts_booked: editCourtsBooked,
+      num_courts: editNumCourts,
+      min_skill_level: editMinSkill,
+      max_skill_level: editMaxSkill,
+      pub_fee: editPubFee,
+      max_pax: editMaxPax,
+      paynow_player_id: editPaynowId || null,
+    }
+    const updated = await api.patch<Session>(`/api/v1/sessions/${id}`, payload)
+    setSession(updated)
+    setEditing(false)
+  } catch (err) {
+    setEditError(err instanceof Error ? err.message : 'Failed to save')
+  } finally {
+    setSaving(false)
+  }
+}
+```
+
+Ensure `api.patch` exists in `frontend/src/lib/api.ts` — if not, add it (see Step 4).
+
+- [ ] **Step 4: Ensure api.patch exists in frontend/src/lib/api.ts**
+
+Open `frontend/src/lib/api.ts`. If `patch` is missing, add:
+
+```typescript
+patch<T>(path: string, body: unknown): Promise<T> {
+  return this.request<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
+},
+```
+
+(Use the same pattern as the existing `post` method.)
+
+- [ ] **Step 5: Add the edit form panel to the JSX**
+
+After the session header section (where the Edit button will live), add an "Edit" button next to the existing action buttons:
+
+```tsx
+{/* Show Edit button only for non-completed, non-cancelled sessions */}
+{session.status !== 'completed' && session.status !== 'cancelled' && (
+  <button
+    onClick={openEdit}
+    className="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700"
+  >
+    ✏️ Edit
+  </button>
+)}
+```
+
+Add the edit form panel (rendered when `editing === true`) — place it just above the main session details card:
+
+```tsx
+{editing && (
+  <div className="rounded-xl bg-gray-800 border border-brand-600 p-4 mb-4 space-y-3">
+    <h2 className="font-semibold text-white">Edit Session</h2>
+    {editError && (
+      <p className="text-sm text-red-300 bg-red-900/40 border border-red-700 rounded-lg px-3 py-2">{editError}</p>
+    )}
+
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="text-xs text-gray-400">Date</label>
+        <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Start Time</label>
+        <input type="time" value={editStartTime} onChange={e => setEditStartTime(e.target.value)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Duration (hours)</label>
+        <input type="number" step="0.5" min="0.5" value={editDuration} onChange={e => setEditDuration(parseFloat(e.target.value))}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Venue</label>
+        <select value={editVenueId} onChange={e => setEditVenueId(e.target.value)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+          {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Courts Booked</label>
+        <input type="text" value={editCourtsBooked} onChange={e => setEditCourtsBooked(e.target.value)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Num Courts</label>
+        <input type="number" min="1" value={editNumCourts} onChange={e => setEditNumCourts(parseInt(e.target.value))}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Min Skill</label>
+        <select value={editMinSkill} onChange={e => setEditMinSkill(e.target.value as SkillLevel)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+          {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Max Skill</label>
+        <select value={editMaxSkill} onChange={e => setEditMaxSkill(e.target.value as SkillLevel)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+          {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Pub Fee ($)</label>
+        <input type="number" step="0.5" min="0" value={editPubFee} onChange={e => setEditPubFee(parseFloat(e.target.value))}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-400">Max Players</label>
+        <input type="number" min="1" value={editMaxPax} onChange={e => setEditMaxPax(parseInt(e.target.value))}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+      </div>
+    </div>
+
+    <div>
+      <label className="text-xs text-gray-400">PayNow Player ID (UUID)</label>
+      <input type="text" value={editPaynowId} onChange={e => setEditPaynowId(e.target.value)}
+        placeholder="leave blank for default"
+        className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+    </div>
+
+    <div className="flex gap-2 pt-1">
+      <button onClick={handleSaveEdit} disabled={saving}
+        className="flex-1 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+        {saving ? 'Saving…' : 'Save Changes'}
+      </button>
+      <button onClick={() => { setEditing(false); setEditError(null) }}
+        className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">
+        Cancel
+      </button>
+    </div>
+  </div>
+)}
+```
+
+Make sure `SKILL_LEVELS` is imported from `../types`.
+
+- [ ] **Step 6: Ensure venues list is loaded in the main useEffect**
+
+The edit form needs the full venue list (not just `venueName` string). In the existing `useEffect`, the `venues` API call result is already used to set `venueName`. Ensure the full venue list is also stored:
+
+```tsx
+// In the useEffect, after setVenueName:
+setVenues(venueList)   // ← store full list for edit form
+```
+
+If `venues` is already stored as a local variable only, change it to state (which was added in Step 1).
+
+- [ ] **Step 7: Verify frontend builds**
+
+```bash
+cd frontend && npm run build
+```
+
+Expected: `✓ built` with no TypeScript errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add frontend/src/pages/SessionDetail.tsx frontend/src/lib/api.ts
+git commit -m "feat: inline edit session on detail page"
+```
+
+---
+
+## Task 5: Bot formatter + cancel notification
+
+**Items covered:** 7 (court label in Telegram), 5-bot (cancellation message)
+
+**Files:**
+- Modify: `backend/app/bot/message_formatter.py`
+- Modify: `backend/app/bot/runner.py`
+- Modify: `backend/tests/test_message_formatter.py`
+
+**Depends on:** Task 3 (cancel service must exist)
+
+---
+
+- [ ] **Step 1: Update test_message_formatter.py — add cancellation + courts label test**
+
+In `backend/tests/test_message_formatter.py`, add:
+
+```python
+def test_courts_label_shows_courts_booked_without_prefix():
+    """Telegram message shows courts_booked text directly (no 'Courts:' prefix)."""
+    session = _make_session()  # use existing helper in the file
+    text = format_session_announcement(
+        session, [], {}, "Sports Hub", "Belle", "9123456"
+    )
+    assert "🏟️ 3 & 4" in text            # courts_booked shown directly
+    assert "Courts:" not in text           # no "Courts:" prefix
+
+
+def test_format_cancellation_message():
+    """Cancellation message contains date, venue, and reason."""
+    from app.bot.message_formatter import format_cancellation_message
+    session = _make_session()
+    text = format_cancellation_message(session, "Sports Hub", "Not enough players")
+    assert "❌" in text
+    assert "Not enough players" in text
+    assert "Sports Hub" in text
+```
+
+Note: look at the existing `_make_session()` helper in `test_message_formatter.py`. If it sets `courts_booked="3 & 4"`, you're set. Update the existing courts test if one exists.
+
+- [ ] **Step 2: Run to confirm new tests fail**
+
+```bash
+cd backend && python -m pytest tests/test_message_formatter.py::test_courts_label_shows_courts_booked_without_prefix tests/test_message_formatter.py::test_format_cancellation_message -v
+```
+
+Expected: `FAILED` (formatter still has "Courts:" prefix; `format_cancellation_message` doesn't exist).
+
+- [ ] **Step 3: Update message_formatter.py — remove "Courts:" prefix**
+
+In `format_session_announcement`, find:
+```python
+f"🏟️ Courts: {session.courts_booked}",
+```
+Change to:
+```python
+f"🏟️ {session.courts_booked}",
+```
+
+- [ ] **Step 4: Add format_cancellation_message to message_formatter.py**
+
+```python
+def format_cancellation_message(session: Session, venue_name: str, reason: str) -> str:
+    """Format a cancellation notice for the LOWKEY group."""
+    date_str = session.date.strftime("%a, %d %b %Y")
+    time_str = f"{session.start_time.strftime('%H:%M')} - {session.end_time.strftime('%H:%M')}"
+    return "\n".join([
+        "❌ Session Cancelled",
+        f"📅 {date_str} {time_str} · {venue_name}",
+        f"Reason: {reason}",
+        "Sorry for the inconvenience! 🙏",
+    ])
+```
+
+- [ ] **Step 5: Run tests to confirm they pass**
+
+```bash
+cd backend && python -m pytest tests/test_message_formatter.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Add post_cancellation_message to BotRunner**
+
+In `backend/app/bot/runner.py`, add the import at the top:
+```python
+from app.bot.message_formatter import (
+    build_full_button,
+    build_join_button,
+    format_admin_summary,
+    format_cancellation_message,     # ← ADD
+    format_session_announcement,
+)
+```
+
+Add the method to `BotRunner`:
+
+```python
+async def post_cancellation_message(self, session_id: UUID, reason: str) -> None:
+    """
+    Post a cancellation notice to the LOWKEY group chat.
+
+    Only sends if the session had a Telegram message (was published).
+    """
+    loop = asyncio.get_running_loop()
+    session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
+    if session.telegram_message_id is None:
+        return  # session was never published — nothing to notify
+
+    venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
+    text = format_cancellation_message(session, venue.name, reason)
+
+    await self._app.bot.send_message(
+        chat_id=settings.lowkey_group_chat_id,
+        text=text,
+    )
+```
+
+- [ ] **Step 7: Verify the cancel endpoint in sessions.py resolves correctly**
+
+```bash
+cd backend && python -c "from app.routers.sessions import router; print('OK')"
+```
+
+Expected: `OK` (now that `post_cancellation_message` is defined).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backend/app/bot/message_formatter.py \
+        backend/app/bot/runner.py \
+        backend/tests/test_message_formatter.py
+git commit -m "feat: court label in Telegram, cancellation bot message"
+```
+
+---
+
+## Task 6: Frontend cancel UI
+
+**Items covered:** 5-frontend (cancel modal)
+
+**Files:**
+- Modify: `frontend/src/pages/SessionDetail.tsx`
+
+**Depends on:** Task 2 (cancelled badge exists), Task 3 (cancel endpoint exists)
+
+---
+
+- [ ] **Step 1: Add cancel state variables to SessionDetail**
+
+Add below existing state:
+
+```tsx
+const [showCancelModal, setShowCancelModal] = useState(false)
+const [cancelReason, setCancelReason] = useState('')
+const [cancelling, setCancelling] = useState(false)
+const [cancelError, setCancelError] = useState<string | null>(null)
+```
+
+- [ ] **Step 2: Add handleCancel function**
+
+```tsx
+async function handleCancel() {
+  if (!id || !cancelReason.trim()) return
+  setCancelling(true)
+  setCancelError(null)
+  try {
+    const updated = await api.post<Session>(`/api/v1/sessions/${id}/cancel`, { reason: cancelReason })
+    setSession(updated)
+    setShowCancelModal(false)
+    setCancelReason('')
+  } catch (err) {
+    setCancelError(err instanceof Error ? err.message : 'Failed to cancel session')
+  } finally {
+    setCancelling(false)
+  }
+}
+```
+
+- [ ] **Step 3: Add Cancel button in action buttons section**
+
+In the session action buttons area (near the "Publish" and "Complete" buttons), add:
+
+```tsx
+{(session.status === 'internal' || session.status === 'published') && (
+  <button
+    onClick={() => setShowCancelModal(true)}
+    className="rounded-lg border border-red-700 px-3 py-1.5 text-sm font-medium text-red-300 hover:bg-red-900/30"
+  >
+    🚫 Cancel Session
+  </button>
+)}
+```
+
+- [ ] **Step 4: Add cancel modal JSX**
+
+Add at the bottom of the return statement (before closing `</div>`):
+
+```tsx
+{showCancelModal && (
+  <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-4 pb-4">
+    <div className="w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-5">
+      <h2 className="text-lg font-bold text-white mb-1">Cancel Session</h2>
+      <p className="text-sm text-gray-400 mb-4">
+        This will notify all players via Telegram. Please provide a reason.
+      </p>
+      {cancelError && (
+        <p className="rounded-lg bg-red-900/50 border border-red-700 px-3 py-2 text-sm text-red-300 mb-3">
+          {cancelError}
+        </p>
+      )}
+      <textarea
+        value={cancelReason}
+        onChange={e => setCancelReason(e.target.value)}
+        rows={3}
+        placeholder="e.g. Not enough players signed up"
+        className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white resize-none mb-4"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={handleCancel}
+          disabled={cancelling || !cancelReason.trim()}
+          className="flex-1 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-50"
+        >
+          {cancelling ? 'Cancelling…' : 'Confirm Cancel'}
+        </button>
+        <button
+          onClick={() => { setShowCancelModal(false); setCancelError(null) }}
+          className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        >
+          Back
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+```
+
+- [ ] **Step 5: Verify frontend builds**
+
+```bash
+cd frontend && npm run build
+```
+
+Expected: `✓ built` with no TypeScript errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add frontend/src/pages/SessionDetail.tsx
+git commit -m "feat: cancel session UI with reason modal"
+```
+
+---
+
+## Task 7: E2E integration test
+
+**Items covered:** All — validate empty roster, internal player auto-pay, cancel lifecycle
+
+**Files:**
+- Create: `backend/tests/test_session_improvements_e2e.py`
+
+**Depends on:** Tasks 1–6
+
+---
+
+- [ ] **Step 1: Write the E2E test**
+
+Create `backend/tests/test_session_improvements_e2e.py`:
+
+```python
+"""
+End-to-end test: session lifecycle improvements.
+
+Tests (as a user would):
+  1. Create session → roster is empty
+  2. Internal player joins via bot → automatically verified_paid
+  3. External player joins via bot → unpaid
+  4. Cancel session → status becomes cancelled
+  5. Cannot cancel an already-cancelled session
+"""
+from unittest.mock import MagicMock, patch, call
+from uuid import uuid4
+from datetime import date, time, datetime, timezone
+
+from app.models.session import Session, SessionCreate, CancelRequest
+from app.models.player import Player
+from app.models.roster import RosterEntry
+from app.models.court_slot import CourtSlotCreate
+import app.services.session_service as session_service
+import app.services.roster_service as roster_service
+
+
+# ── shared fixtures ───────────────────────────────────────────────────────────
+
+SESSION_ID = uuid4()
+VENUE_ID = uuid4()
+INTERNAL_PLAYER_ID = uuid4()
+EXTERNAL_PLAYER_ID = uuid4()
+
+
+def _make_internal_player() -> Player:
+    return Player(
+        id=INTERNAL_PLAYER_ID,
+        name="Belle",
+        skill_level="LI",
+        phone="91234567",
+        is_internal=True,
+        telegram_id=111,
+        notes=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_external_player() -> Player:
+    return Player(
+        id=EXTERNAL_PLAYER_ID,
+        name="Public Player",
+        skill_level="HB",
+        phone=None,
+        is_internal=False,
+        telegram_id=222,
+        notes=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _session_row(status: str = "published") -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "id": str(SESSION_ID),
+        "venue_id": str(VENUE_ID),
+        "date": "2026-06-01",
+        "start_time": "20:00:00",
+        "end_time": "22:00:00",
+        "duration_hours": 2.0,
+        "courts_booked": "3 & 4",
+        "num_courts": 2,
+        "min_skill_level": "HB",
+        "max_skill_level": "LI",
+        "pub_fee": 12.0,
+        "max_pax": 12,
+        "status": status,
+        "telegram_message_id": None,
+        "paynow_player_id": None,
+        "created_at": now,
+    }
+
+
+def _roster_entry(player_id, payment_status: str, position: int = 1) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "id": str(uuid4()),
+        "session_id": str(SESSION_ID),
+        "player_id": str(player_id),
+        "guest_name": None,
+        "player_type": "registered",
+        "payment_status": payment_status,
+        "is_waitlisted": False,
+        "position": position,
+        "joined_at": now,
+        "created_at": now,
+    }
+
+
+# ── tests ─────────────────────────────────────────────────────────────────────
+
+def test_create_session_has_empty_roster():
+    """After create, no roster_entries are inserted."""
+    client = MagicMock()
+    client.rpc.return_value.execute.return_value.data = _session_row()
+
+    with patch("app.services.session_service.get_service_client", return_value=client):
+        session_service.create(SessionCreate(
+            venue_id=VENUE_ID,
+            date=date(2026, 6, 1),
+            start_time=time(20, 0),
+            duration_hours=2.0,
+            courts_booked="3 & 4",
+            num_courts=2,
+            pub_fee=12.0,
+            court_slots=[CourtSlotCreate(
+                court_label="3",
+                from_time=time(20, 0),
+                to_time=time(22, 0),
+                booker_player_id=uuid4(),
+            )],
+        ))
+
+    # roster_entries table must never be touched during create
+    for call_args in client.table.call_args_list:
+        assert call_args[0][0] != "roster_entries", \
+            "create() must not insert into roster_entries"
+
+
+def test_internal_player_joins_as_verified_paid():
+    """When an internal player joins via bot, payment_status = verified_paid."""
+    internal = _make_internal_player()
+    client = MagicMock()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Chain: session query → empty roster check → active count → position query → insert
+    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        MagicMock(data=[{"max_pax": 12}]),  # session max_pax
+        MagicMock(data=[]),                  # not already on roster
+        MagicMock(data=[]),                  # active count (0 entries)
+        MagicMock(data=[]),                  # position (no entries yet)
+    ]
+    inserted_entry = _roster_entry(INTERNAL_PLAYER_ID, "verified_paid")
+    client.table.return_value.insert.return_value.execute.return_value.data = [inserted_entry]
+
+    with (
+        patch("app.services.roster_service.get_service_client", return_value=client),
+        patch("app.services.player_service.get_by_telegram_id", return_value=None),
+        patch("app.services.player_service.create", return_value=internal),
+        patch("app.services.roster_service.get_active_count", return_value=0),
+    ):
+        entry, is_waitlisted = roster_service.add_player(SESSION_ID, 111, "Belle")
+
+    inserted_row = client.table.return_value.insert.call_args[0][0]
+    assert inserted_row["payment_status"] == "verified_paid"
+    assert not is_waitlisted
+
+
+def test_external_player_joins_as_unpaid():
+    """When a non-internal player joins via bot, payment_status = unpaid."""
+    external = _make_external_player()
+    client = MagicMock()
+
+    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        MagicMock(data=[{"max_pax": 12}]),
+        MagicMock(data=[]),
+        MagicMock(data=[]),
+        MagicMock(data=[]),
+    ]
+    inserted_entry = _roster_entry(EXTERNAL_PLAYER_ID, "unpaid")
+    client.table.return_value.insert.return_value.execute.return_value.data = [inserted_entry]
+
+    with (
+        patch("app.services.roster_service.get_service_client", return_value=client),
+        patch("app.services.player_service.get_by_telegram_id", return_value=None),
+        patch("app.services.player_service.create", return_value=external),
+        patch("app.services.roster_service.get_active_count", return_value=0),
+    ):
+        entry, _ = roster_service.add_player(SESSION_ID, 222, "Public Player")
+
+    inserted_row = client.table.return_value.insert.call_args[0][0]
+    assert inserted_row["payment_status"] == "unpaid"
+
+
+def test_cancel_session_transitions_to_cancelled():
+    """Cancelling a published session sets status = cancelled."""
+    client = MagicMock()
+    client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"status": "published"}
+    ]
+    client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
+        _session_row("cancelled")
+    ]
+    with patch("app.services.session_service.get_service_client", return_value=client):
+        result = session_service.cancel(SESSION_ID, "Not enough players")
+    assert result.status == "cancelled"
+
+
+def test_cannot_cancel_already_cancelled():
+    """Cancelling an already-cancelled session raises ValueError."""
+    client = MagicMock()
+    client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"status": "cancelled"}
+    ]
+    with patch("app.services.session_service.get_service_client", return_value=client):
+        try:
+            session_service.cancel(SESSION_ID, "reason")
+            assert False, "Expected ValueError"
+        except ValueError:
+            pass
+```
+
+- [ ] **Step 2: Run all E2E + unit tests**
+
+```bash
+cd backend && python -m pytest tests/test_session_improvements_e2e.py tests/test_roster_service.py tests/test_session_service.py tests/test_message_formatter.py -v
+```
+
+Expected: All tests pass.
+
+- [ ] **Step 3: Run full test suite to confirm no regressions**
+
+```bash
+cd backend && python -m pytest tests/ -v
+```
+
+Expected: All tests pass.
+
+- [ ] **Step 4: Verify frontend build**
+
+```bash
+cd frontend && npm run build
+```
+
+Expected: `✓ built`.
+
+- [ ] **Step 5: Final commit**
+
+```bash
+git add backend/tests/test_session_improvements_e2e.py
+git commit -m "test: E2E session improvements integration test"
+```
+
+---
+
+## Self-review
+
+**Spec coverage check:**
+- ✅ Item 1 (empty roster): Task 1 Step 5
+- ✅ Item 2 (edit session): Task 4
+- ✅ Item 3 (skill defaults): Task 1 Step 4 + Step 8
+- ✅ Item 4 (verify any player): Task 2 Step 4
+- ✅ Item 5 (cancel): Task 3 + Task 5 + Task 6
+- ✅ Item 6 (loading spinner): Task 2 Step 3
+- ✅ Item 7 (court label): Task 5 Step 3
+- ✅ Item 8 (422 fix): Task 2 Step 2
+- ✅ Item 9 (internal auto-pay): Task 1 Step 6
+- ✅ DB migration: Task 1 Step 3
+- ✅ E2E test: Task 7
+
+**Placeholder scan:** No TBDs or TODOs found in code blocks.
+
+**Type consistency:**
+- `CancelRequest` defined in Task 3, used in Task 3 router and Task 6 frontend — consistent.
+- `SkillLevel` (from types/index.ts) used in Task 4 edit form — imported from `../types`.
+- `SKILL_LEVELS` array used in Task 4 — imported from `../types`.
+- `api.patch` defined in Task 4 Step 4 — used in Task 4 Step 3.
+- `format_cancellation_message` defined in Task 5 Step 4, imported in Task 5 Step 6 — consistent.
+- `post_cancellation_message` defined in Task 5 Step 6, called in Task 3 Step 6 router — consistent.
