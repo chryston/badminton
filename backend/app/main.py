@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.bot.runner import bot_runner
 from app.config import settings
-from app.routers import sessions, roster, players, inventory, pnl, venues, court_slots
+from app.routers import sessions, roster, players, inventory, pnl, venues, court_slots, fund
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ app.include_router(inventory.router, prefix="/api/v1", tags=["inventory"])
 app.include_router(pnl.router, prefix="/api/v1", tags=["pnl"])
 app.include_router(venues.router, prefix="/api/v1", tags=["venues"])
 app.include_router(court_slots.router, prefix="/api/v1", tags=["court-slots"])
+app.include_router(fund.router, prefix="/api/v1", tags=["fund"])
 
 
 @app.get("/health")
