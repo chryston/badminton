@@ -177,6 +177,11 @@ export function SessionDetail() {
   const [addingGuest, setAddingGuest] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+
   const loadRoster = useCallback(async () => {
     if (!id) return
     const entries = await api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`)
@@ -263,6 +268,22 @@ export function SessionDetail() {
     } catch (err) {
       // P&L fetch failed but session was completed — show warning not error
       setError('Session completed but P&L could not be loaded. Please refresh.')
+    }
+  }
+
+  async function handleCancel() {
+    if (!id || !cancelReason.trim()) return
+    setCancelling(true)
+    setCancelError(null)
+    try {
+      const updated = await api.post<Session>(`/api/v1/sessions/${id}/cancel`, { reason: cancelReason })
+      setSession(updated)
+      setShowCancelModal(false)
+      setCancelReason('')
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel session')
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -539,6 +560,14 @@ export function SessionDetail() {
             ✅ Complete Session
           </button>
         )}
+        {(session.status === 'internal' || session.status === 'published') && (
+          <button
+            onClick={() => setShowCancelModal(true)}
+            className="rounded-lg border border-red-700 px-3 py-1.5 text-sm font-medium text-red-300 hover:bg-red-900/30"
+          >
+            🚫 Cancel Session
+          </button>
+        )}
         {session.status === 'completed' && pnl && (
           <div className="rounded-xl bg-gray-800 border border-gray-700 p-4">
             <h2 className="text-white font-semibold mb-3">P&amp;L Summary</h2>
@@ -693,6 +722,45 @@ export function SessionDetail() {
           onClose={() => setShowCompleteModal(false)}
           onConfirm={handleComplete}
         />
+      )}
+
+      {/* Cancel Session Modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-4 pb-4">
+          <div className="w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-5">
+            <h2 className="text-lg font-bold text-white mb-1">Cancel Session</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              This will notify all players via Telegram. Please provide a reason.
+            </p>
+            {cancelError && (
+              <p className="rounded-lg bg-red-900/50 border border-red-700 px-3 py-2 text-sm text-red-300 mb-3">
+                {cancelError}
+              </p>
+            )}
+            <textarea
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. Not enough players signed up"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white resize-none mb-4"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleCancel}
+                disabled={cancelling || !cancelReason.trim()}
+                className="flex-1 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-50"
+              >
+                {cancelling ? 'Cancelling…' : 'Confirm Cancel'}
+              </button>
+              <button
+                onClick={() => { setShowCancelModal(false); setCancelError(null) }}
+                className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
