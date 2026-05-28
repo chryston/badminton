@@ -5,7 +5,10 @@ from app.dependencies import require_admin
 from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster, CancelRequest
 from app.models.shuttle import ShuttleUsageCreate
 import app.services.session_service as session_service
+import app.services.venue_service as venue_service
+import app.services.roster_service as roster_service
 from app.bot.runner import bot_runner
+from app.bot.message_formatter import format_recruit_message
 
 router = APIRouter(prefix="/sessions")
 
@@ -43,7 +46,11 @@ async def complete_session(
     shuttle_usages: list[ShuttleUsageCreate] = Body(default=[]),
     _=Depends(require_admin),
 ):
-    return session_service.complete(session_id, shuttle_usages)
+    session_before = session_service.get_by_id(session_id)
+    result = session_service.complete(session_id, shuttle_usages)
+    if session_before is not None:
+        asyncio.create_task(bot_runner.delete_session_message(session_before))
+    return result
 
 
 @router.post("/{session_id}/cancel", response_model=Session)
@@ -55,3 +62,16 @@ async def cancel_session(
     session = session_service.cancel(session_id, body.reason)
     asyncio.create_task(bot_runner.post_cancellation_message(session, body.reason))
     return session
+
+
+@router.post("/{session_id}/recruit", response_model=dict)
+async def recruit_players(session_id: UUID, _=Depends(require_admin)):
+    """Generate a recruit message, send it to the admin group, and return the text."""
+    session = session_service.get_by_id(session_id)
+    venue = venue_service.get_by_id(session.venue_id)
+    roster = roster_service.get_session_roster(session_id)
+    active_count = sum(1 for e in roster if not e.is_waitlisted)
+    slots_left = max(0, session.max_pax - active_count)
+    message = format_recruit_message(session, slots_left, venue.name)
+    asyncio.create_task(bot_runner.post_recruit_message(message))
+    return {"message": message}
