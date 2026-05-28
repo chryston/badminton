@@ -344,6 +344,8 @@ export function SessionDetail() {
       }
       const updated = await api.patch<Session>(`/api/v1/sessions/${id}`, payload)
       setSession(updated)
+      const newVenue = venues.find(v => v.id === updated.venue_id)
+      if (newVenue) setVenueName(newVenue.name)
       setEditing(false)
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to save')
@@ -428,7 +430,7 @@ export function SessionDetail() {
             </div>
             <div>
               <label className="text-xs text-gray-400">Duration (hours)</label>
-              <input type="number" step="0.5" min="0.5" value={editForm.duration_hours ?? 2} onChange={e => setEditForm(prev => ({...prev, duration_hours: parseFloat(e.target.value)}))}
+              <input type="number" step="0.5" min="0.5" value={editForm.duration_hours ?? 2} onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) setEditForm(prev => ({...prev, duration_hours: v})) }}
                 className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
             </div>
             <div>
@@ -445,7 +447,7 @@ export function SessionDetail() {
             </div>
             <div>
               <label className="text-xs text-gray-400">Num Courts</label>
-              <input type="number" min="1" value={editForm.num_courts ?? 1} onChange={e => setEditForm(prev => ({...prev, num_courts: parseInt(e.target.value)}))}
+              <input type="number" min="1" value={editForm.num_courts ?? 1} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v)) setEditForm(prev => ({...prev, num_courts: v})) }}
                 className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
             </div>
             <div>
@@ -464,12 +466,12 @@ export function SessionDetail() {
             </div>
             <div>
               <label className="text-xs text-gray-400">Pub Fee ($)</label>
-              <input type="number" step="0.5" min="0" value={editForm.pub_fee ?? 0} onChange={e => setEditForm(prev => ({...prev, pub_fee: parseFloat(e.target.value)}))}
+              <input type="number" step="0.5" min="0" value={editForm.pub_fee ?? 0} onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) setEditForm(prev => ({...prev, pub_fee: v})) }}
                 className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
             </div>
             <div>
               <label className="text-xs text-gray-400">Max Players</label>
-              <input type="number" min="1" value={editForm.max_pax ?? 12} onChange={e => setEditForm(prev => ({...prev, max_pax: parseInt(e.target.value)}))}
+              <input type="number" min="1" value={editForm.max_pax ?? 12} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v)) setEditForm(prev => ({...prev, max_pax: v})) }}
                 className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
             </div>
           </div>
