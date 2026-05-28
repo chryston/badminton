@@ -17,6 +17,9 @@ Set environment variables:
 ```bash
 export SUPABASE_URL=https://your-project.supabase.co
 export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+export SUPABASE_URL=https://bluorxnssewypmgnnwgs.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJsdW9yeG5zc2V3eXBtZ25ud2dzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTY4NDg3MCwiZXhwIjoyMDk1MjYwODcwfQ.ODsccO9ocnpqkiz2of4Vyp8rH2MVwEuBKBhVvW2t_fk
 ```
 
 Then run from the repo root:
