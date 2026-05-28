@@ -11,4 +11,4 @@ CREATE TABLE IF NOT EXISTS fund_entries (
 ALTER TABLE fund_entries ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Service role full access" ON fund_entries
-    FOR ALL USING (true) WITH CHECK (true);
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);

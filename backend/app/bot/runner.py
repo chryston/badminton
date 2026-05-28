@@ -13,6 +13,7 @@ from telegram.ext import (
 
 import app.services.venue_service as venue_service
 from app.bot.handlers import (
+    handle_full_callback,
     handle_join_callback,
     handle_name_message,
     handle_start,
@@ -54,6 +55,9 @@ class BotRunner:
         )
         self._app.add_handler(
             CallbackQueryHandler(handle_withdraw_callback, pattern=r"^leave:")
+        )
+        self._app.add_handler(
+            CallbackQueryHandler(handle_full_callback, pattern=r"^full$")
         )
         self._app.add_handler(CommandHandler("help", handle_help_command))
         self._app.add_handler(
@@ -131,9 +135,12 @@ class BotRunner:
         """
         loop = asyncio.get_running_loop()
 
-        session = await loop.run_in_executor(
-            None, session_service.get_by_id, session_id
-        )
+        try:
+            session = await loop.run_in_executor(
+                None, session_service.get_by_id, session_id
+            )
+        except ValueError:
+            return
         if session.telegram_message_id is None:
             return
 
@@ -190,12 +197,11 @@ class BotRunner:
     ) -> None:
         """Notify the admin group when a player withdraws."""
         loop = asyncio.get_running_loop()
-        session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
-        if session is None:
+        try:
+            session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
+        except ValueError:
             return
         venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
-        if venue is None:
-            return
         was_paid = entry.payment_status == "verified_paid"
         text = format_withdraw_notification(player_name, session, venue.name, was_paid)
         try:

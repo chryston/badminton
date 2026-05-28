@@ -171,6 +171,12 @@ async def handle_name_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await bot_runner.edit_session_message(session_id)
 
 
+async def handle_full_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for the 'Full 🔒' button — dismisses Telegram's loading spinner."""
+    query = update.callback_query
+    await query.answer("This session is full! 🔒", show_alert=False)
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for the /start command in private chat."""
     await update.message.reply_text(

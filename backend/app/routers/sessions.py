@@ -73,6 +73,8 @@ async def recruit_players(session_id: UUID, _=Depends(require_admin)):
     roster = roster_service.get_session_roster(session_id)
     active_count = sum(1 for e in roster if not e.is_waitlisted)
     slots_left = max(0, session.max_pax - active_count)
+    if slots_left == 0:
+        raise HTTPException(status_code=400, detail="Session is already full — no slots to recruit for")
     message = format_recruit_message(session, slots_left, venue.name)
     asyncio.create_task(bot_runner.post_recruit_message(message))
     return {"message": message}
