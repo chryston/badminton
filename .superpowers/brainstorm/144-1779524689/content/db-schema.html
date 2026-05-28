@@ -1,0 +1,131 @@
+<h2>Database Schema — Entity Relationships</h2>
+<p class="subtitle">6 core tables · Click any entity to highlight it</p>
+
+<style>
+.erd { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 16px; }
+.entity { background: #1e293b; border-radius: 10px; border: 2px solid #334155; overflow: hidden; cursor: pointer; transition: border-color 0.2s; }
+.entity:hover { border-color: #38bdf8; }
+.entity.selected-entity { border-color: #22c55e !important; }
+.entity-header { padding: 8px 14px; font-weight: 700; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+.entity-field { padding: 4px 14px; font-size: 12px; font-family: monospace; border-top: 1px solid #0f172a; display: flex; justify-content: space-between; }
+.entity-field .fname { color: #e2e8f0; }
+.entity-field .ftype { color: #64748b; font-size: 11px; }
+.entity-field.pk { background: #1a2744; }
+.entity-field.pk .fname { color: #fbbf24; }
+.entity-field.fk .fname { color: #a78bfa; }
+.entity-field.special .fname { color: #34d399; }
+.badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: middle; }
+.relations { background: #0f172a; border-radius: 10px; padding: 14px; margin-top: 16px; grid-column: 1 / -1; }
+.rel-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; font-family: monospace; }
+.rel-from { color: #fbbf24; min-width: 180px; }
+.rel-arrow { color: #64748b; }
+.rel-to { color: #a78bfa; }
+.rel-note { color: #64748b; font-size: 11px; margin-left: 8px; }
+</style>
+
+<div class="erd">
+
+  <!-- players -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#1d4ed8">👤 players</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field special"><span class="fname">auth_user_id</span><span class="ftype">uuid nullable</span></div>
+    <div class="entity-field"><span class="fname">telegram_id</span><span class="ftype">bigint unique</span></div>
+    <div class="entity-field"><span class="fname">name</span><span class="ftype">text</span></div>
+    <div class="entity-field"><span class="fname">phone</span><span class="ftype">text nullable</span></div>
+    <div class="entity-field"><span class="fname">skill_level</span><span class="ftype">enum HB/LI/MB</span></div>
+    <div class="entity-field special"><span class="fname">is_internal</span><span class="ftype">boolean</span></div>
+    <div class="entity-field special"><span class="fname">is_admin</span><span class="ftype">boolean</span></div>
+    <div class="entity-field"><span class="fname">notes</span><span class="ftype">text nullable</span></div>
+    <div class="entity-field"><span class="fname">created_at</span><span class="ftype">timestamptz</span></div>
+  </div>
+
+  <!-- venues -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#0f766e">🏟️ venues</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field"><span class="fname">name</span><span class="ftype">text</span></div>
+    <div class="entity-field"><span class="fname">court_cost_per_hour</span><span class="ftype">numeric</span></div>
+    <div class="entity-field"><span class="fname">default_pub_fee</span><span class="ftype">numeric</span></div>
+    <div class="entity-field"><span class="fname">created_at</span><span class="ftype">timestamptz</span></div>
+  </div>
+
+  <!-- shuttle_batches -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#7e22ce">🏸 shuttle_batches</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field"><span class="fname">batch_name</span><span class="ftype">text</span></div>
+    <div class="entity-field"><span class="fname">brand</span><span class="ftype">text</span></div>
+    <div class="entity-field"><span class="fname">cost_per_tube</span><span class="ftype">numeric</span></div>
+    <div class="entity-field"><span class="fname">shuttles_per_tube</span><span class="ftype">int</span></div>
+    <div class="entity-field special"><span class="fname">cost_per_shuttle</span><span class="ftype">numeric (computed)</span></div>
+    <div class="entity-field"><span class="fname">remaining_count</span><span class="ftype">int</span></div>
+    <div class="entity-field special"><span class="fname">is_active</span><span class="ftype">boolean</span></div>
+    <div class="entity-field"><span class="fname">purchased_at</span><span class="ftype">date</span></div>
+  </div>
+
+  <!-- sessions -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#b45309">📅 sessions</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field fk"><span class="fname">venue_id</span><span class="ftype">uuid → venues</span></div>
+    <div class="entity-field"><span class="fname">date</span><span class="ftype">date</span></div>
+    <div class="entity-field"><span class="fname">start_time / end_time</span><span class="ftype">time</span></div>
+    <div class="entity-field"><span class="fname">courts_booked</span><span class="ftype">text e.g. "1 & 2"</span></div>
+    <div class="entity-field"><span class="fname">num_courts</span><span class="ftype">int</span></div>
+    <div class="entity-field"><span class="fname">skill_level</span><span class="ftype">text</span></div>
+    <div class="entity-field"><span class="fname">pub_fee</span><span class="ftype">numeric</span></div>
+    <div class="entity-field"><span class="fname">max_pax</span><span class="ftype">int</span></div>
+    <div class="entity-field special"><span class="fname">status</span><span class="ftype">enum internal/published/completed</span></div>
+    <div class="entity-field special"><span class="fname">telegram_message_id</span><span class="ftype">bigint nullable</span></div>
+    <div class="entity-field fk"><span class="fname">paynow_player_id</span><span class="ftype">uuid → players</span></div>
+    <div class="entity-field"><span class="fname">shuttles_used</span><span class="ftype">int nullable</span></div>
+  </div>
+
+  <!-- roster_entries -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#065f46">📋 roster_entries</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field fk"><span class="fname">session_id</span><span class="ftype">uuid → sessions</span></div>
+    <div class="entity-field fk"><span class="fname">player_id</span><span class="ftype">uuid → players nullable</span></div>
+    <div class="entity-field"><span class="fname">guest_name</span><span class="ftype">text nullable</span></div>
+    <div class="entity-field special"><span class="fname">player_type</span><span class="ftype">enum registered/guest</span></div>
+    <div class="entity-field special"><span class="fname">payment_status</span><span class="ftype">enum unpaid/pending/verified</span></div>
+    <div class="entity-field special"><span class="fname">is_waitlisted</span><span class="ftype">boolean</span></div>
+    <div class="entity-field"><span class="fname">position</span><span class="ftype">int (1–12+ order)</span></div>
+    <div class="entity-field"><span class="fname">joined_at</span><span class="ftype">timestamptz</span></div>
+  </div>
+
+  <!-- shuttle_usage -->
+  <div class="entity" onclick="this.classList.toggle('selected-entity')">
+    <div class="entity-header" style="background:#9f1239">📦 shuttle_usage</div>
+    <div class="entity-field pk"><span class="fname">id</span><span class="ftype">uuid PK</span></div>
+    <div class="entity-field fk"><span class="fname">session_id</span><span class="ftype">uuid → sessions</span></div>
+    <div class="entity-field fk"><span class="fname">batch_id</span><span class="ftype">uuid → shuttle_batches</span></div>
+    <div class="entity-field"><span class="fname">count_used</span><span class="ftype">int</span></div>
+    <div class="entity-field"><span class="fname">created_at</span><span class="ftype">timestamptz</span></div>
+  </div>
+
+  <!-- relations legend -->
+  <div class="relations">
+    <div style="color:#94a3b8;font-size:12px;font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">Relationships</div>
+    <div class="rel-row"><span class="rel-from">sessions.venue_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">venues.id</span></div>
+    <div class="rel-row"><span class="rel-from">sessions.paynow_player_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">players.id</span><span class="rel-note">(who receives PayNow per session)</span></div>
+    <div class="rel-row"><span class="rel-from">roster_entries.session_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">sessions.id</span></div>
+    <div class="rel-row"><span class="rel-from">roster_entries.player_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">players.id</span><span class="rel-note">(null for guest entries)</span></div>
+    <div class="rel-row"><span class="rel-from">shuttle_usage.session_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">sessions.id</span></div>
+    <div class="rel-row"><span class="rel-from">shuttle_usage.batch_id</span><span class="rel-arrow">→ many-to-one →</span><span class="rel-to">shuttle_batches.id</span></div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid #1e293b">
+      <span style="color:#fbbf24;font-size:11px">■</span><span style="font-size:11px;color:#64748b"> Primary Key &nbsp;</span>
+      <span style="color:#a78bfa;font-size:11px">■</span><span style="font-size:11px;color:#64748b"> Foreign Key &nbsp;</span>
+      <span style="color:#34d399;font-size:11px">■</span><span style="font-size:11px;color:#64748b"> Key business field</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// plain toggle — no toggleSelect interference
+document.querySelectorAll('.entity').forEach(el => {
+  el.addEventListener('click', () => el.classList.toggle('selected-entity'));
+});
+</script>
