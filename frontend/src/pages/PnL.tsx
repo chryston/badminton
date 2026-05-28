@@ -94,6 +94,8 @@ export function PnL() {
       setFund(updated)
       setNewEntryDesc('')
       setNewEntryAmount('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add fund entry')
     } finally {
       setAddingEntry(false)
     }
