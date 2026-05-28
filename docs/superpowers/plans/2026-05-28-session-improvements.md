@@ -95,12 +95,14 @@ def _make_db_client(active_count: int = 0, max_pax: int = 12):
     }]
 
     client = MagicMock()
+    # Single-eq chain: session max_pax lookup → .eq("id", ...)
     client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
-        session_result,   # session max_pax
-        empty_result,     # existing roster check
-        count_result,     # active count (for is_waitlisted)
-        pos_result,       # position query
+        session_result,   # session max_pax (.eq("id", session_id))
     ]
+    # Double-eq chain: existing roster check → .eq("session_id", ...).eq("player_id", ...)
+    client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    # Position query uses order+limit, not eq: patch get_active_count and position separately
+    client.table.return_value.select.return_value.eq.return_value.order.return_value.desc.return_value.limit.return_value.execute.return_value.data = []
     client.table.return_value.insert.return_value.execute.return_value = insert_result
     return client
 
@@ -148,7 +150,7 @@ Expected: `FAILED test_internal_player_auto_marked_verified_paid` (current code 
 Create `supabase/migrations/006_add_cancelled_status.sql`:
 
 ```sql
--- Migration 006: Add cancelled session status and fix payment_status constraint
+-- Migration 006: Add cancelled session status, cancellation_reason, fix payment_status constraint
 
 -- ── 1. Expand sessions.status to include 'cancelled' ─────────────────────────
 ALTER TABLE sessions
@@ -156,7 +158,11 @@ ALTER TABLE sessions
     ADD  CONSTRAINT sessions_status_check
         CHECK (status IN ('internal', 'published', 'completed', 'cancelled'));
 
--- ── 2. Fix roster_entries.payment_status to include 'pending_verification' ───
+-- ── 2. Add cancellation_reason column ─────────────────────────────────────────
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+
+-- ── 3. Fix roster_entries.payment_status to include 'pending_verification' ───
 --      (001_schema.sql only had unpaid/verified_paid — inconsistent with app)
 ALTER TABLE roster_entries
     DROP CONSTRAINT IF EXISTS roster_entries_payment_status_check,
@@ -187,6 +193,21 @@ class SessionUpdate(BaseModel):
     max_pax: Annotated[int, Field(gt=0)] | None = None
     paynow_player_id: UUID | None = None
     telegram_message_id: int | None = None
+```
+
+Also add `cancellation_reason` to the `Session` read model:
+```python
+class Session(BaseModel):
+    # ... existing fields ...
+    cancellation_reason: str | None = None   # ← ADD at end of class
+```
+
+Also fix `session_service.update()` to use `exclude_unset=True` instead of `exclude_none=True`. This allows clearing nullable fields (e.g., `paynow_player_id: null` will clear it):
+```python
+# In update() function, change:
+payload = data.model_dump(mode="json", exclude_none=True)
+# To:
+payload = data.model_dump(mode="json", exclude_unset=True)
 ```
 
 - [ ] **Step 5: Update backend/app/services/session_service.py — remove auto-populate roster**
@@ -406,11 +427,10 @@ git commit -m "fix: 422 complete session, loading spinner, verify-any-player, ca
 Create `backend/tests/test_session_service.py`:
 
 ```python
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
-from app.services import session_service
-from app.models.session import Session
-from datetime import date, time, datetime, timezone
+from datetime import datetime, timezone
+import app.services.session_service as session_service
 
 
 def _make_session_row(status: str = "published") -> dict:
@@ -431,6 +451,7 @@ def _make_session_row(status: str = "published") -> dict:
         "status": status,
         "telegram_message_id": None,
         "paynow_player_id": None,
+        "cancellation_reason": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -452,11 +473,8 @@ def test_cancel_published_session():
     """Cancelling a published session sets status to cancelled."""
     row = _make_session_row("published")
     client = _make_db_client(row)
-    session_id = uuid4()
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "app.services.session_service.get_service_client", return_value=client
-    ):
-        result = session_service.cancel(session_id, "Not enough players")
+    with patch("app.services.session_service.get_service_client", return_value=client):
+        result = session_service.cancel(uuid4(), "Not enough players")
     assert result.status == "cancelled"
 
 
@@ -464,11 +482,8 @@ def test_cancel_internal_session():
     """Cancelling an internal session also works."""
     row = _make_session_row("internal")
     client = _make_db_client(row)
-    session_id = uuid4()
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "app.services.session_service.get_service_client", return_value=client
-    ):
-        result = session_service.cancel(session_id, "Venue unavailable")
+    with patch("app.services.session_service.get_service_client", return_value=client):
+        result = session_service.cancel(uuid4(), "Venue unavailable")
     assert result.status == "cancelled"
 
 
@@ -476,12 +491,9 @@ def test_cannot_cancel_completed_session():
     """Completed sessions cannot be cancelled."""
     row = _make_session_row("completed")
     client = _make_db_client(row)
-    session_id = uuid4()
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "app.services.session_service.get_service_client", return_value=client
-    ):
+    with patch("app.services.session_service.get_service_client", return_value=client):
         try:
-            session_service.cancel(session_id, "reason")
+            session_service.cancel(uuid4(), "reason")
             assert False, "Expected ValueError"
         except ValueError as e:
             assert "completed" in str(e).lower()
@@ -519,14 +531,12 @@ def cancel(session_id: UUID, reason: str) -> Session:
         raise ValueError(f"Cannot cancel a {current_status} session")
     result = (
         client.table("sessions")
-        .update({"status": "cancelled"})
+        .update({"status": "cancelled", "cancellation_reason": reason})
         .eq("id", str(session_id))
         .execute()
     )
     return Session(**result.data[0])
 ```
-
-Note: `reason` is passed to the bot by the router — `cancel()` itself only updates the DB. The router triggers the bot notification after calling this.
 
 - [ ] **Step 5: Run tests to confirm they pass**
 
@@ -553,11 +563,9 @@ async def cancel_session(
     _=Depends(require_admin),
 ):
     session = session_service.cancel(session_id, body.reason)
-    asyncio.create_task(bot_runner.post_cancellation_message(session_id, body.reason))
+    asyncio.create_task(bot_runner.post_cancellation_message(session, body.reason))
     return session
 ```
-
-Note: `bot_runner.post_cancellation_message` is added in Task 5. For now, reference it — the import will resolve after Task 5 is done.
 
 - [ ] **Step 7: Verify backend starts without import errors**
 
@@ -839,25 +847,28 @@ In `backend/tests/test_message_formatter.py`, add:
 ```python
 def test_courts_label_shows_courts_booked_without_prefix():
     """Telegram message shows courts_booked text directly (no 'Courts:' prefix)."""
-    session = _make_session()  # use existing helper in the file
+    from app.models.session import Session as S
+    from datetime import date, time
+    from uuid import uuid4
+    from datetime import datetime, timezone
+    # Build session with a specific courts_booked value for assertion
+    session = _session()  # existing helper returns courts_booked="Court 1"
     text = format_session_announcement(
         session, [], {}, "Sports Hub", "Belle", "9123456"
     )
-    assert "🏟️ 3 & 4" in text            # courts_booked shown directly
-    assert "Courts:" not in text           # no "Courts:" prefix
+    assert f"🏟️ {session.courts_booked}" in text   # courts_booked shown directly
+    assert "Courts:" not in text                    # no "Courts:" prefix
 
 
 def test_format_cancellation_message():
     """Cancellation message contains date, venue, and reason."""
     from app.bot.message_formatter import format_cancellation_message
-    session = _make_session()
+    session = _session()
     text = format_cancellation_message(session, "Sports Hub", "Not enough players")
     assert "❌" in text
     assert "Not enough players" in text
     assert "Sports Hub" in text
 ```
-
-Note: look at the existing `_make_session()` helper in `test_message_formatter.py`. If it sets `courts_booked="3 & 4"`, you're set. Update the existing courts test if one exists.
 
 - [ ] **Step 2: Run to confirm new tests fail**
 
@@ -917,24 +928,29 @@ from app.bot.message_formatter import (
 Add the method to `BotRunner`:
 
 ```python
-async def post_cancellation_message(self, session_id: UUID, reason: str) -> None:
+async def post_cancellation_message(self, session: Session, reason: str) -> None:
     """
     Post a cancellation notice to the LOWKEY group chat.
 
     Only sends if the session had a Telegram message (was published).
     """
-    loop = asyncio.get_running_loop()
-    session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
     if session.telegram_message_id is None:
         return  # session was never published — nothing to notify
 
+    loop = asyncio.get_running_loop()
     venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
     text = format_cancellation_message(session, venue.name, reason)
 
-    await self._app.bot.send_message(
-        chat_id=settings.lowkey_group_chat_id,
-        text=text,
-    )
+    try:
+        await self._app.bot.send_message(
+            chat_id=settings.telegram_lowkey_chat_id,
+            text=text,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to send cancellation message for session %s", session.id
+        )
 ```
 
 - [ ] **Step 7: Verify the cancel endpoint in sessions.py resolves correctly**
@@ -1093,63 +1109,26 @@ Create `backend/tests/test_session_improvements_e2e.py`:
 """
 End-to-end test: session lifecycle improvements.
 
-Tests (as a user would):
-  1. Create session → roster is empty
-  2. Internal player joins via bot → automatically verified_paid
-  3. External player joins via bot → unpaid
-  4. Cancel session → status becomes cancelled
-  5. Cannot cancel an already-cancelled session
+Focuses on cross-cutting behaviour not covered by unit tests:
+  1. Create session → roster remains empty (no roster_entries inserted)
+  2. Full cancel lifecycle: published → cancelled with reason persisted
 """
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 from datetime import date, time, datetime, timezone
 
-from app.models.session import Session, SessionCreate, CancelRequest
-from app.models.player import Player
-from app.models.roster import RosterEntry
+from app.models.session import SessionCreate
 from app.models.court_slot import CourtSlotCreate
 import app.services.session_service as session_service
-import app.services.roster_service as roster_service
 
 
-# ── shared fixtures ───────────────────────────────────────────────────────────
-
-SESSION_ID = uuid4()
 VENUE_ID = uuid4()
-INTERNAL_PLAYER_ID = uuid4()
-EXTERNAL_PLAYER_ID = uuid4()
-
-
-def _make_internal_player() -> Player:
-    return Player(
-        id=INTERNAL_PLAYER_ID,
-        name="Belle",
-        skill_level="LI",
-        phone="91234567",
-        is_internal=True,
-        telegram_id=111,
-        notes=None,
-        created_at=datetime.now(timezone.utc),
-    )
-
-
-def _make_external_player() -> Player:
-    return Player(
-        id=EXTERNAL_PLAYER_ID,
-        name="Public Player",
-        skill_level="HB",
-        phone=None,
-        is_internal=False,
-        telegram_id=222,
-        notes=None,
-        created_at=datetime.now(timezone.utc),
-    )
 
 
 def _session_row(status: str = "published") -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "id": str(SESSION_ID),
+        "id": str(uuid4()),
         "venue_id": str(VENUE_ID),
         "date": "2026-06-01",
         "start_time": "20:00:00",
@@ -1164,27 +1143,10 @@ def _session_row(status: str = "published") -> dict:
         "status": status,
         "telegram_message_id": None,
         "paynow_player_id": None,
+        "cancellation_reason": None,
         "created_at": now,
     }
 
-
-def _roster_entry(player_id, payment_status: str, position: int = 1) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": str(uuid4()),
-        "session_id": str(SESSION_ID),
-        "player_id": str(player_id),
-        "guest_name": None,
-        "player_type": "registered",
-        "payment_status": payment_status,
-        "is_waitlisted": False,
-        "position": position,
-        "joined_at": now,
-        "created_at": now,
-    }
-
-
-# ── tests ─────────────────────────────────────────────────────────────────────
 
 def test_create_session_has_empty_roster():
     """After create, no roster_entries are inserted."""
@@ -1214,87 +1176,25 @@ def test_create_session_has_empty_roster():
             "create() must not insert into roster_entries"
 
 
-def test_internal_player_joins_as_verified_paid():
-    """When an internal player joins via bot, payment_status = verified_paid."""
-    internal = _make_internal_player()
-    client = MagicMock()
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Chain: session query → empty roster check → active count → position query → insert
-    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
-        MagicMock(data=[{"max_pax": 12}]),  # session max_pax
-        MagicMock(data=[]),                  # not already on roster
-        MagicMock(data=[]),                  # active count (0 entries)
-        MagicMock(data=[]),                  # position (no entries yet)
-    ]
-    inserted_entry = _roster_entry(INTERNAL_PLAYER_ID, "verified_paid")
-    client.table.return_value.insert.return_value.execute.return_value.data = [inserted_entry]
-
-    with (
-        patch("app.services.roster_service.get_service_client", return_value=client),
-        patch("app.services.player_service.get_by_telegram_id", return_value=None),
-        patch("app.services.player_service.create", return_value=internal),
-        patch("app.services.roster_service.get_active_count", return_value=0),
-    ):
-        entry, is_waitlisted = roster_service.add_player(SESSION_ID, 111, "Belle")
-
-    inserted_row = client.table.return_value.insert.call_args[0][0]
-    assert inserted_row["payment_status"] == "verified_paid"
-    assert not is_waitlisted
-
-
-def test_external_player_joins_as_unpaid():
-    """When a non-internal player joins via bot, payment_status = unpaid."""
-    external = _make_external_player()
-    client = MagicMock()
-
-    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
-        MagicMock(data=[{"max_pax": 12}]),
-        MagicMock(data=[]),
-        MagicMock(data=[]),
-        MagicMock(data=[]),
-    ]
-    inserted_entry = _roster_entry(EXTERNAL_PLAYER_ID, "unpaid")
-    client.table.return_value.insert.return_value.execute.return_value.data = [inserted_entry]
-
-    with (
-        patch("app.services.roster_service.get_service_client", return_value=client),
-        patch("app.services.player_service.get_by_telegram_id", return_value=None),
-        patch("app.services.player_service.create", return_value=external),
-        patch("app.services.roster_service.get_active_count", return_value=0),
-    ):
-        entry, _ = roster_service.add_player(SESSION_ID, 222, "Public Player")
-
-    inserted_row = client.table.return_value.insert.call_args[0][0]
-    assert inserted_row["payment_status"] == "unpaid"
-
-
-def test_cancel_session_transitions_to_cancelled():
-    """Cancelling a published session sets status = cancelled."""
+def test_cancel_persists_reason_in_db():
+    """cancel() stores cancellation_reason alongside status=cancelled."""
+    session_id = uuid4()
     client = MagicMock()
     client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
         {"status": "published"}
     ]
     client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
-        _session_row("cancelled")
+        {**_session_row("cancelled"), "cancellation_reason": "Not enough players"}
     ]
     with patch("app.services.session_service.get_service_client", return_value=client):
-        result = session_service.cancel(SESSION_ID, "Not enough players")
+        result = session_service.cancel(session_id, "Not enough players")
+
+    # Verify the update payload included both status and reason
+    update_payload = client.table.return_value.update.call_args[0][0]
+    assert update_payload["status"] == "cancelled"
+    assert update_payload["cancellation_reason"] == "Not enough players"
     assert result.status == "cancelled"
-
-
-def test_cannot_cancel_already_cancelled():
-    """Cancelling an already-cancelled session raises ValueError."""
-    client = MagicMock()
-    client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
-        {"status": "cancelled"}
-    ]
-    with patch("app.services.session_service.get_service_client", return_value=client):
-        try:
-            session_service.cancel(SESSION_ID, "reason")
-            assert False, "Expected ValueError"
-        except ValueError:
-            pass
+    assert result.cancellation_reason == "Not enough players"
 ```
 
 - [ ] **Step 2: Run all E2E + unit tests**
@@ -1342,15 +1242,25 @@ git commit -m "test: E2E session improvements integration test"
 - ✅ Item 7 (court label): Task 5 Step 3
 - ✅ Item 8 (422 fix): Task 2 Step 2
 - ✅ Item 9 (internal auto-pay): Task 1 Step 6
-- ✅ DB migration: Task 1 Step 3
+- ✅ DB migration (cancelled + cancellation_reason + payment_status): Task 1 Step 3
 - ✅ E2E test: Task 7
 
-**Placeholder scan:** No TBDs or TODOs found in code blocks.
+**Review fixes applied:**
+- Mock chain corrected: double-eq roster check uses `.eq().eq()` chain (not `.eq()`)
+- `settings.telegram_lowkey_chat_id` used (not `lowkey_group_chat_id`)
+- Test helper `_session()` used (not `_make_session()`); courts assertion uses `session.courts_booked` dynamically
+- `cancellation_reason` stored in DB + in Session model
+- `cancel()` stores both `status` and `cancellation_reason` in single update
+- Router passes `Session` object to bot (no extra DB fetch in `post_cancellation_message`)
+- Bot logs exceptions on Telegram failure instead of silently swallowing
+- `session_service.update()` uses `exclude_unset=True` (allows clearing nullable fields)
+- `__import__` anti-pattern removed; normal `from unittest.mock import patch` used
+- E2E test simplified: only 2 truly unique tests (empty roster + reason persisted)
 
 **Type consistency:**
 - `CancelRequest` defined in Task 3, used in Task 3 router and Task 6 frontend — consistent.
-- `SkillLevel` (from types/index.ts) used in Task 4 edit form — imported from `../types`.
-- `SKILL_LEVELS` array used in Task 4 — imported from `../types`.
+- `Session.cancellation_reason` added in Task 1 Step 4, used in E2E assertions — consistent.
+- `SkillLevel` / `SKILL_LEVELS` imported from `../types` in Task 4 edit form.
 - `api.patch` defined in Task 4 Step 4 — used in Task 4 Step 3.
 - `format_cancellation_message` defined in Task 5 Step 4, imported in Task 5 Step 6 — consistent.
-- `post_cancellation_message` defined in Task 5 Step 6, called in Task 3 Step 6 router — consistent.
+- `post_cancellation_message(session, reason)` signature matches router call in Task 3 Step 6.
