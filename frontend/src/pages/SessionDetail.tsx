@@ -814,9 +814,7 @@ export function SessionDetail() {
           <div className="w-full max-w-lg rounded-xl bg-gray-800 border border-gray-600 p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-white mb-3">📣 Recruit Message</h3>
             <p className="text-xs text-gray-400 mb-2">Sent to admin group. Copy and share as needed.</p>
-            <pre className="rounded bg-gray-900 p-3 text-sm text-gray-200 whitespace-pre-wrap mb-4 border border-gray-700">
-              {recruitMessage}
-            </pre>
+            <pre className="rounded bg-gray-900 p-3 text-sm text-gray-200 whitespace-pre-wrap mb-4 border border-gray-700">{recruitMessage}</pre>
             <div className="flex gap-3">
               <button
                 onClick={handleCopyRecruit}
