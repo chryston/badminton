@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as _date, datetime, time as _time
 from typing import Annotated, Literal
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.court_slot import CourtSlotCreate
 from app.models.shuttle import ShuttleUsage
@@ -61,6 +61,13 @@ class SessionUpdate(BaseModel):
     telegram_message_id: int | None = None
     # Note: status is managed via dedicated /publish and /complete endpoints.
     # shuttles_used is recorded via the /complete endpoint with ShuttleUsageCreate, not here.
+
+    @field_validator("venue_id", mode="before")
+    @classmethod
+    def validate_venue_id(cls, v: UUID | None) -> UUID | None:
+        if v is None:
+            raise ValueError("venue_id cannot be null")
+        return v
 
 
 class SessionWithRoster(Session):

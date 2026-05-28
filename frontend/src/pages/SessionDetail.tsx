@@ -347,6 +347,13 @@ export function SessionDetail() {
 
   async function handleSaveEdit() {
     if (!id) return
+    const SKILL_ORDER = ['LB', 'MB', 'HB', 'LI', 'MI', 'HI', 'A']
+    const minIdx = SKILL_ORDER.indexOf(editForm.min_skill_level ?? 'HB')
+    const maxIdx = SKILL_ORDER.indexOf(editForm.max_skill_level ?? 'LI')
+    if (minIdx > maxIdx) {
+      setEditError('Min skill level must not exceed max skill level')
+      return
+    }
     setSaving(true)
     setEditError(null)
     try {
@@ -535,7 +542,7 @@ export function SessionDetail() {
 
       {/* Action buttons */}
       <div className="mb-4 space-y-2">
-        {session.status !== 'completed' && session.status !== 'cancelled' && (
+        {session.status !== 'completed' && session.status !== 'cancelled' && !editing && (
           <button
             onClick={openEdit}
             className="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700"
