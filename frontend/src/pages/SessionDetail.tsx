@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
-import { skillRangeLabel } from '../types'
+import { skillRangeLabel, SKILL_LEVELS } from '../types'
 import type {
   Session,
   RosterEntry,
@@ -12,6 +12,7 @@ import type {
   SessionStatus,
   PaymentStatus,
   CourtSlot,
+  SkillLevel,
 } from '../types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -160,6 +161,13 @@ export function SessionDetail() {
   const [error, setError] = useState<string | null>(null)
 
   // action states
+  const [editing, setEditing] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [editForm, setEditForm] = useState<Partial<Session>>({})
+  const [venues, setVenues] = useState<Venue[]>([])
+
+  // action states
   const [publishing, setPublishing] = useState(false)
   const [showCompleteModal, setShowCompleteModal] = useState(false)
   const [activeBatches, setActiveBatches] = useState<ShuttleBatch[]>([])
@@ -189,7 +197,7 @@ export function SessionDetail() {
     const controller = new AbortController()
     async function load(signal: AbortSignal) {
       try {
-        const [sess, venues, rosterEntries, playerList, courtSlotData] = await Promise.all([
+        const [sess, venueList, rosterEntries, playerList, courtSlotData] = await Promise.all([
           api.get<Session>(`/api/v1/sessions/${id}`, signal),
           api.get<Venue[]>('/api/v1/venues', signal),
           api.get<RosterEntry[]>(`/api/v1/sessions/${id}/roster`, signal),
@@ -197,8 +205,9 @@ export function SessionDetail() {
           api.get<CourtSlot[]>(`/api/v1/sessions/${id}/court-slots`, signal),
         ])
         setSession(sess)
-        const venue = venues.find(v => v.id === sess.venue_id)
+        const venue = venueList.find(v => v.id === sess.venue_id)
         setVenueName(venue?.name ?? 'Unknown Venue')
+        setVenues(venueList)
         setRoster(rosterEntries)
         setCourtSlots(courtSlotData)
         const map: Record<string, Player> = {}
@@ -309,6 +318,40 @@ export function SessionDetail() {
     }
   }
 
+  function openEdit() {
+    if (!session) return
+    setEditForm(session)
+    setEditing(true)
+  }
+
+  async function handleSaveEdit() {
+    if (!id) return
+    setSaving(true)
+    setEditError(null)
+    try {
+      const payload: Record<string, unknown> = {
+        venue_id: editForm.venue_id || undefined,
+        date: editForm.date,
+        start_time: editForm.start_time,
+        duration_hours: editForm.duration_hours,
+        courts_booked: editForm.courts_booked,
+        num_courts: editForm.num_courts,
+        min_skill_level: editForm.min_skill_level,
+        max_skill_level: editForm.max_skill_level,
+        pub_fee: editForm.pub_fee,
+        max_pax: editForm.max_pax,
+        paynow_player_id: editForm.paynow_player_id || null,
+      }
+      const updated = await api.patch<Session>(`/api/v1/sessions/${id}`, payload)
+      setSession(updated)
+      setEditing(false)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // ─── render states ──────────────────────────────────────────────────────────
 
   if (loading) {
@@ -364,6 +407,93 @@ export function SessionDetail() {
         </p>
       )}
 
+      {/* Edit form panel */}
+      {editing && (
+        <div className="rounded-xl bg-gray-800 border border-brand-600 p-4 mb-4 space-y-3">
+          <h2 className="font-semibold text-white">Edit Session</h2>
+          {editError && (
+            <p className="text-sm text-red-300 bg-red-900/40 border border-red-700 rounded-lg px-3 py-2">{editError}</p>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400">Date</label>
+              <input type="date" value={editForm.date ?? ''} onChange={e => setEditForm(prev => ({...prev, date: e.target.value}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Start Time</label>
+              <input type="time" value={(editForm.start_time ?? '').slice(0, 5)} onChange={e => setEditForm(prev => ({...prev, start_time: e.target.value + ':00'}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Duration (hours)</label>
+              <input type="number" step="0.5" min="0.5" value={editForm.duration_hours ?? 2} onChange={e => setEditForm(prev => ({...prev, duration_hours: parseFloat(e.target.value)}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Venue</label>
+              <select value={editForm.venue_id ?? ''} onChange={e => setEditForm(prev => ({...prev, venue_id: e.target.value}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+                {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Courts Booked</label>
+              <input type="text" value={editForm.courts_booked ?? ''} onChange={e => setEditForm(prev => ({...prev, courts_booked: e.target.value}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Num Courts</label>
+              <input type="number" min="1" value={editForm.num_courts ?? 1} onChange={e => setEditForm(prev => ({...prev, num_courts: parseInt(e.target.value)}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Min Skill</label>
+              <select value={editForm.min_skill_level ?? 'HB'} onChange={e => setEditForm(prev => ({...prev, min_skill_level: e.target.value as SkillLevel}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+                {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Max Skill</label>
+              <select value={editForm.max_skill_level ?? 'LI'} onChange={e => setEditForm(prev => ({...prev, max_skill_level: e.target.value as SkillLevel}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
+                {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Pub Fee ($)</label>
+              <input type="number" step="0.5" min="0" value={editForm.pub_fee ?? 0} onChange={e => setEditForm(prev => ({...prev, pub_fee: parseFloat(e.target.value)}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Max Players</label>
+              <input type="number" min="1" value={editForm.max_pax ?? 12} onChange={e => setEditForm(prev => ({...prev, max_pax: parseInt(e.target.value)}))}
+                className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-400">PayNow Player ID (UUID)</label>
+            <input type="text" value={editForm.paynow_player_id ?? ''} onChange={e => setEditForm(prev => ({...prev, paynow_player_id: e.target.value || undefined}))}
+              placeholder="leave blank for default"
+              className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleSaveEdit} disabled={saving}
+              className="flex-1 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+            <button onClick={() => { setEditing(false); setEditError(null) }}
+              className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Session info card */}
       <div className="rounded-xl bg-gray-800 border border-gray-700 p-4 mb-4 space-y-2">
         <div className="flex items-center justify-between">
@@ -381,7 +511,15 @@ export function SessionDetail() {
       </div>
 
       {/* Action buttons */}
-      <div className="mb-4">
+      <div className="mb-4 space-y-2">
+        {session.status !== 'completed' && session.status !== 'cancelled' && (
+          <button
+            onClick={openEdit}
+            className="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            ✏️ Edit
+          </button>
+        )}
         {session.status === 'internal' && (
           <button
             onClick={handlePublish}
