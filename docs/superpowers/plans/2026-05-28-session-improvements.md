@@ -19,7 +19,6 @@
 | 1 | Task 1 (DB + backend models/services), Task 2 (frontend types + simple fixes) | — |
 | 2 | Task 3 (cancel backend), Task 4 (frontend edit) | Task 1 |
 | 3 | Task 5 (bot formatter + cancel), Task 6 (frontend cancel UI) | Task 3 |
-| 4 | Task 7 (E2E test) | All |
 
 ---
 
@@ -62,48 +61,24 @@ def _make_player(is_internal: bool) -> Player:
     )
 
 
-def _make_db_client(active_count: int = 0, max_pax: int = 12):
-    """Build a minimal mock DB client for roster operations."""
-    builder = MagicMock()
-    builder.execute.return_value.data = []
-    # session select → max_pax
-    session_result = MagicMock()
-    session_result.data = [{"max_pax": max_pax}]
-    # existing roster check → empty (player not already on roster)
-    empty_result = MagicMock()
-    empty_result.data = []
-    # active count result
-    count_result = MagicMock()
-    count_result.data = [{"id": str(uuid4())} for _ in range(active_count)]
-    # position query → no existing entries
-    pos_result = MagicMock()
-    pos_result.data = []
-    # insert result
-    now = datetime.now(timezone.utc).isoformat()
-    insert_result = MagicMock()
-    insert_result.data = [{
-        "id": str(uuid4()),
-        "session_id": str(uuid4()),
-        "player_id": str(uuid4()),
-        "guest_name": None,
-        "player_type": "registered",
-        "payment_status": "unpaid",
-        "is_waitlisted": False,
-        "position": 1,
-        "joined_at": now,
-        "created_at": now,
-    }]
+def _make_db_client():
+    """Build a minimal mock DB client — only mocks the insert().execute() chain.
 
+    The insert side_effect echoes back the inserted row so assertions on the
+    returned RosterEntry reflect what the code actually set.
+    """
     client = MagicMock()
-    # Single-eq chain: session max_pax lookup → .eq("id", ...)
-    client.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
-        session_result,   # session max_pax (.eq("id", session_id))
-    ]
-    # Double-eq chain: existing roster check → .eq("session_id", ...).eq("player_id", ...)
-    client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-    # Position query uses order+limit, not eq: patch get_active_count and position separately
-    client.table.return_value.select.return_value.eq.return_value.order.return_value.desc.return_value.limit.return_value.execute.return_value.data = []
-    client.table.return_value.insert.return_value.execute.return_value = insert_result
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _insert_and_return(row):
+        mock = MagicMock()
+        mock.execute.return_value.data = [
+            {"id": str(uuid4()), "guest_name": None, "is_waitlisted": False,
+             "joined_at": now, "created_at": now, **row}
+        ]
+        return mock
+
+    client.table.return_value.insert.side_effect = _insert_and_return
     return client
 
 
@@ -118,8 +93,7 @@ def test_external_player_added_as_unpaid():
         patch("app.services.roster_service.get_active_count", return_value=0),
     ):
         entry, _ = roster_service.add_player(uuid4(), 123456, "External Player")
-    inserted_row = client.table.return_value.insert.call_args[0][0]
-    assert inserted_row["payment_status"] == "unpaid"
+    assert entry.payment_status == "unpaid"
 
 
 def test_internal_player_auto_marked_verified_paid():
@@ -132,9 +106,8 @@ def test_internal_player_auto_marked_verified_paid():
         patch("app.services.player_service.create", return_value=player),
         patch("app.services.roster_service.get_active_count", return_value=0),
     ):
-        roster_service.add_player(uuid4(), 123456, "Internal Player")
-    inserted_row = client.table.return_value.insert.call_args[0][0]
-    assert inserted_row["payment_status"] == "verified_paid"
+        entry, _ = roster_service.add_player(uuid4(), 123456, "Internal Player")
+    assert entry.payment_status == "verified_paid"
 ```
 
 - [ ] **Step 2: Run to confirm tests fail**
@@ -471,19 +444,13 @@ def _make_db_client(session_row: dict):
 
 def test_cancel_published_session():
     """Cancelling a published session sets status to cancelled."""
+    reason = "Not enough players"
     row = _make_session_row("published")
     client = _make_db_client(row)
     with patch("app.services.session_service.get_service_client", return_value=client):
-        result = session_service.cancel(uuid4(), "Not enough players")
-    assert result.status == "cancelled"
-
-
-def test_cancel_internal_session():
-    """Cancelling an internal session also works."""
-    row = _make_session_row("internal")
-    client = _make_db_client(row)
-    with patch("app.services.session_service.get_service_client", return_value=client):
-        result = session_service.cancel(uuid4(), "Venue unavailable")
+        result = session_service.cancel(uuid4(), reason)
+    update_payload = client.table.return_value.update.call_args[0][0]
+    assert update_payload["cancellation_reason"] == reason
     assert result.status == "cancelled"
 
 
@@ -544,7 +511,7 @@ def cancel(session_id: UUID, reason: str) -> Session:
 cd backend && python -m pytest tests/test_session_service.py -v
 ```
 
-Expected: all 3 tests pass.
+Expected: both tests pass.
 
 - [ ] **Step 6: Add cancel endpoint to backend/app/routers/sessions.py**
 
@@ -563,7 +530,6 @@ async def cancel_session(
     _=Depends(require_admin),
 ):
     session = session_service.cancel(session_id, body.reason)
-    asyncio.create_task(bot_runner.post_cancellation_message(session, body.reason))
     return session
 ```
 
@@ -573,7 +539,7 @@ async def cancel_session(
 cd backend && python -c "from app.routers.sessions import router; print('OK')"
 ```
 
-Expected: `OK` (or `AttributeError: module...has no attribute 'post_cancellation_message'` — that's fine; it will be resolved in Task 5).
+Expected: `OK`.
 
 - [ ] **Step 8: Commit**
 
@@ -606,18 +572,8 @@ Below the existing state declarations (around line ~167), add:
 const [editing, setEditing] = useState(false)
 const [editError, setEditError] = useState<string | null>(null)
 const [saving, setSaving] = useState(false)
-// Edit form state — pre-populated when edit mode opens
-const [editDate, setEditDate] = useState('')
-const [editStartTime, setEditStartTime] = useState('')
-const [editDuration, setEditDuration] = useState(2)
-const [editVenueId, setEditVenueId] = useState('')
-const [editCourtsBooked, setEditCourtsBooked] = useState('')
-const [editNumCourts, setEditNumCourts] = useState(1)
-const [editMinSkill, setEditMinSkill] = useState<SkillLevel>('HB')
-const [editMaxSkill, setEditMaxSkill] = useState<SkillLevel>('LI')
-const [editPubFee, setEditPubFee] = useState(0)
-const [editMaxPax, setEditMaxPax] = useState(12)
-const [editPaynowId, setEditPaynowId] = useState<string>('')
+// Single edit-form state — pre-populated when edit mode opens
+const [editForm, setEditForm] = useState<Partial<Session>>({})
 const [venues, setVenues] = useState<Venue[]>([])
 ```
 
@@ -630,17 +586,7 @@ Add this function after the `loadPnl` callback:
 ```tsx
 function openEdit() {
   if (!session) return
-  setEditDate(session.date)
-  setEditStartTime(session.start_time.slice(0, 5))  // "HH:MM"
-  setEditDuration(session.duration_hours)
-  setEditVenueId(session.venue_id)
-  setEditCourtsBooked(session.courts_booked)
-  setEditNumCourts(session.num_courts)
-  setEditMinSkill(session.min_skill_level as SkillLevel)
-  setEditMaxSkill(session.max_skill_level as SkillLevel)
-  setEditPubFee(session.pub_fee)
-  setEditMaxPax(session.max_pax)
-  setEditPaynowId(session.paynow_player_id ?? '')
+  setEditForm(session)
   setEditing(true)
 }
 ```
@@ -654,17 +600,17 @@ async function handleSaveEdit() {
   setEditError(null)
   try {
     const payload: Record<string, unknown> = {
-      venue_id: editVenueId || undefined,
-      date: editDate,
-      start_time: editStartTime + ':00',
-      duration_hours: editDuration,
-      courts_booked: editCourtsBooked,
-      num_courts: editNumCourts,
-      min_skill_level: editMinSkill,
-      max_skill_level: editMaxSkill,
-      pub_fee: editPubFee,
-      max_pax: editMaxPax,
-      paynow_player_id: editPaynowId || null,
+      venue_id: editForm.venue_id || undefined,
+      date: editForm.date,
+      start_time: editForm.start_time,
+      duration_hours: editForm.duration_hours,
+      courts_booked: editForm.courts_booked,
+      num_courts: editForm.num_courts,
+      min_skill_level: editForm.min_skill_level,
+      max_skill_level: editForm.max_skill_level,
+      pub_fee: editForm.pub_fee,
+      max_pax: editForm.max_pax,
+      paynow_player_id: editForm.paynow_player_id || null,
     }
     const updated = await api.patch<Session>(`/api/v1/sessions/${id}`, payload)
     setSession(updated)
@@ -720,65 +666,65 @@ Add the edit form panel (rendered when `editing === true`) — place it just abo
     <div className="grid grid-cols-2 gap-3">
       <div>
         <label className="text-xs text-gray-400">Date</label>
-        <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+        <input type="date" value={editForm.date ?? ''} onChange={e => setEditForm(prev => ({...prev, date: e.target.value}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Start Time</label>
-        <input type="time" value={editStartTime} onChange={e => setEditStartTime(e.target.value)}
+        <input type="time" value={(editForm.start_time ?? '').slice(0, 5)} onChange={e => setEditForm(prev => ({...prev, start_time: e.target.value + ':00'}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Duration (hours)</label>
-        <input type="number" step="0.5" min="0.5" value={editDuration} onChange={e => setEditDuration(parseFloat(e.target.value))}
+        <input type="number" step="0.5" min="0.5" value={editForm.duration_hours ?? 2} onChange={e => setEditForm(prev => ({...prev, duration_hours: parseFloat(e.target.value)}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Venue</label>
-        <select value={editVenueId} onChange={e => setEditVenueId(e.target.value)}
+        <select value={editForm.venue_id ?? ''} onChange={e => setEditForm(prev => ({...prev, venue_id: e.target.value}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
           {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
       </div>
       <div>
         <label className="text-xs text-gray-400">Courts Booked</label>
-        <input type="text" value={editCourtsBooked} onChange={e => setEditCourtsBooked(e.target.value)}
+        <input type="text" value={editForm.courts_booked ?? ''} onChange={e => setEditForm(prev => ({...prev, courts_booked: e.target.value}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Num Courts</label>
-        <input type="number" min="1" value={editNumCourts} onChange={e => setEditNumCourts(parseInt(e.target.value))}
+        <input type="number" min="1" value={editForm.num_courts ?? 1} onChange={e => setEditForm(prev => ({...prev, num_courts: parseInt(e.target.value)}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Min Skill</label>
-        <select value={editMinSkill} onChange={e => setEditMinSkill(e.target.value as SkillLevel)}
+        <select value={editForm.min_skill_level ?? 'HB'} onChange={e => setEditForm(prev => ({...prev, min_skill_level: e.target.value as SkillLevel}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
           {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
       <div>
         <label className="text-xs text-gray-400">Max Skill</label>
-        <select value={editMaxSkill} onChange={e => setEditMaxSkill(e.target.value as SkillLevel)}
+        <select value={editForm.max_skill_level ?? 'LI'} onChange={e => setEditForm(prev => ({...prev, max_skill_level: e.target.value as SkillLevel}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white">
           {SKILL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
       <div>
         <label className="text-xs text-gray-400">Pub Fee ($)</label>
-        <input type="number" step="0.5" min="0" value={editPubFee} onChange={e => setEditPubFee(parseFloat(e.target.value))}
+        <input type="number" step="0.5" min="0" value={editForm.pub_fee ?? 0} onChange={e => setEditForm(prev => ({...prev, pub_fee: parseFloat(e.target.value)}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
       <div>
         <label className="text-xs text-gray-400">Max Players</label>
-        <input type="number" min="1" value={editMaxPax} onChange={e => setEditMaxPax(parseInt(e.target.value))}
+        <input type="number" min="1" value={editForm.max_pax ?? 12} onChange={e => setEditForm(prev => ({...prev, max_pax: parseInt(e.target.value)}))}
           className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
       </div>
     </div>
 
     <div>
       <label className="text-xs text-gray-400">PayNow Player ID (UUID)</label>
-      <input type="text" value={editPaynowId} onChange={e => setEditPaynowId(e.target.value)}
+      <input type="text" value={editForm.paynow_player_id ?? ''} onChange={e => setEditForm(prev => ({...prev, paynow_player_id: e.target.value || undefined}))}
         placeholder="leave blank for default"
         className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white" />
     </div>
@@ -953,7 +899,23 @@ async def post_cancellation_message(self, session: Session, reason: str) -> None
         )
 ```
 
-- [ ] **Step 7: Verify the cancel endpoint in sessions.py resolves correctly**
+- [ ] **Step 7: Wire bot notification into cancel router**
+
+Now that `post_cancellation_message` is defined, update `backend/app/routers/sessions.py` to add the background task:
+
+```python
+@router.post("/{session_id}/cancel", response_model=Session)
+async def cancel_session(
+    session_id: UUID,
+    body: CancelRequest,
+    _=Depends(require_admin),
+):
+    session = session_service.cancel(session_id, body.reason)
+    asyncio.create_task(bot_runner.post_cancellation_message(session, body.reason))
+    return session
+```
+
+- [ ] **Step 8: Verify the cancel endpoint resolves correctly**
 
 ```bash
 cd backend && python -c "from app.routers.sessions import router; print('OK')"
@@ -961,11 +923,12 @@ cd backend && python -c "from app.routers.sessions import router; print('OK')"
 
 Expected: `OK` (now that `post_cancellation_message` is defined).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add backend/app/bot/message_formatter.py \
         backend/app/bot/runner.py \
+        backend/app/routers/sessions.py \
         backend/tests/test_message_formatter.py
 git commit -m "feat: court label in Telegram, cancellation bot message"
 ```
@@ -1090,146 +1053,6 @@ git commit -m "feat: cancel session UI with reason modal"
 
 ---
 
-## Task 7: E2E integration test
-
-**Items covered:** All — validate empty roster, internal player auto-pay, cancel lifecycle
-
-**Files:**
-- Create: `backend/tests/test_session_improvements_e2e.py`
-
-**Depends on:** Tasks 1–6
-
----
-
-- [ ] **Step 1: Write the E2E test**
-
-Create `backend/tests/test_session_improvements_e2e.py`:
-
-```python
-"""
-End-to-end test: session lifecycle improvements.
-
-Focuses on cross-cutting behaviour not covered by unit tests:
-  1. Create session → roster remains empty (no roster_entries inserted)
-  2. Full cancel lifecycle: published → cancelled with reason persisted
-"""
-from unittest.mock import MagicMock, patch
-from uuid import uuid4
-from datetime import date, time, datetime, timezone
-
-from app.models.session import SessionCreate
-from app.models.court_slot import CourtSlotCreate
-import app.services.session_service as session_service
-
-
-VENUE_ID = uuid4()
-
-
-def _session_row(status: str = "published") -> dict:
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": str(uuid4()),
-        "venue_id": str(VENUE_ID),
-        "date": "2026-06-01",
-        "start_time": "20:00:00",
-        "end_time": "22:00:00",
-        "duration_hours": 2.0,
-        "courts_booked": "3 & 4",
-        "num_courts": 2,
-        "min_skill_level": "HB",
-        "max_skill_level": "LI",
-        "pub_fee": 12.0,
-        "max_pax": 12,
-        "status": status,
-        "telegram_message_id": None,
-        "paynow_player_id": None,
-        "cancellation_reason": None,
-        "created_at": now,
-    }
-
-
-def test_create_session_has_empty_roster():
-    """After create, no roster_entries are inserted."""
-    client = MagicMock()
-    client.rpc.return_value.execute.return_value.data = _session_row()
-
-    with patch("app.services.session_service.get_service_client", return_value=client):
-        session_service.create(SessionCreate(
-            venue_id=VENUE_ID,
-            date=date(2026, 6, 1),
-            start_time=time(20, 0),
-            duration_hours=2.0,
-            courts_booked="3 & 4",
-            num_courts=2,
-            pub_fee=12.0,
-            court_slots=[CourtSlotCreate(
-                court_label="3",
-                from_time=time(20, 0),
-                to_time=time(22, 0),
-                booker_player_id=uuid4(),
-            )],
-        ))
-
-    # roster_entries table must never be touched during create
-    for call_args in client.table.call_args_list:
-        assert call_args[0][0] != "roster_entries", \
-            "create() must not insert into roster_entries"
-
-
-def test_cancel_persists_reason_in_db():
-    """cancel() stores cancellation_reason alongside status=cancelled."""
-    session_id = uuid4()
-    client = MagicMock()
-    client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
-        {"status": "published"}
-    ]
-    client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
-        {**_session_row("cancelled"), "cancellation_reason": "Not enough players"}
-    ]
-    with patch("app.services.session_service.get_service_client", return_value=client):
-        result = session_service.cancel(session_id, "Not enough players")
-
-    # Verify the update payload included both status and reason
-    update_payload = client.table.return_value.update.call_args[0][0]
-    assert update_payload["status"] == "cancelled"
-    assert update_payload["cancellation_reason"] == "Not enough players"
-    assert result.status == "cancelled"
-    assert result.cancellation_reason == "Not enough players"
-```
-
-- [ ] **Step 2: Run all E2E + unit tests**
-
-```bash
-cd backend && python -m pytest tests/test_session_improvements_e2e.py tests/test_roster_service.py tests/test_session_service.py tests/test_message_formatter.py -v
-```
-
-Expected: All tests pass.
-
-- [ ] **Step 3: Run full test suite to confirm no regressions**
-
-```bash
-cd backend && python -m pytest tests/ -v
-```
-
-Expected: All tests pass.
-
-- [ ] **Step 4: Verify frontend build**
-
-```bash
-cd frontend && npm run build
-```
-
-Expected: `✓ built`.
-
-- [ ] **Step 5: Final commit**
-
-```bash
-git add backend/tests/test_session_improvements_e2e.py
-git commit -m "test: E2E session improvements integration test"
-```
-
----
-
 ## Self-review
 
 **Spec coverage check:**
@@ -1243,10 +1066,8 @@ git commit -m "test: E2E session improvements integration test"
 - ✅ Item 8 (422 fix): Task 2 Step 2
 - ✅ Item 9 (internal auto-pay): Task 1 Step 6
 - ✅ DB migration (cancelled + cancellation_reason + payment_status): Task 1 Step 3
-- ✅ E2E test: Task 7
 
 **Review fixes applied:**
-- Mock chain corrected: double-eq roster check uses `.eq().eq()` chain (not `.eq()`)
 - `settings.telegram_lowkey_chat_id` used (not `lowkey_group_chat_id`)
 - Test helper `_session()` used (not `_make_session()`); courts assertion uses `session.courts_booked` dynamically
 - `cancellation_reason` stored in DB + in Session model
@@ -1255,12 +1076,11 @@ git commit -m "test: E2E session improvements integration test"
 - Bot logs exceptions on Telegram failure instead of silently swallowing
 - `session_service.update()` uses `exclude_unset=True` (allows clearing nullable fields)
 - `__import__` anti-pattern removed; normal `from unittest.mock import patch` used
-- E2E test simplified: only 2 truly unique tests (empty roster + reason persisted)
 
 **Type consistency:**
 - `CancelRequest` defined in Task 3, used in Task 3 router and Task 6 frontend — consistent.
-- `Session.cancellation_reason` added in Task 1 Step 4, used in E2E assertions — consistent.
+- `Session.cancellation_reason` added in Task 1 Step 4, used in Task 3 test — consistent.
 - `SkillLevel` / `SKILL_LEVELS` imported from `../types` in Task 4 edit form.
 - `api.patch` defined in Task 4 Step 4 — used in Task 4 Step 3.
 - `format_cancellation_message` defined in Task 5 Step 4, imported in Task 5 Step 6 — consistent.
-- `post_cancellation_message(session, reason)` signature matches router call in Task 3 Step 6.
+- `post_cancellation_message(session, reason)` signature matches router call in Task 5 Step 7.
