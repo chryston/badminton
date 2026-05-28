@@ -5,7 +5,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot.conversation import conversation_state
+from app.bot.message_formatter import format_help_text, format_withdraw_notification
 from app.services import player_service, roster_service
+import app.services.session_service as session_service
 
 
 async def handle_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -69,6 +71,55 @@ async def handle_join_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Please start a DM with me first, then press Join again!",
                 show_alert=True,
             )
+
+
+async def handle_withdraw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handler for the "Leave 🚪" inline button press.
+
+    Flow:
+    1. Parse session_id from callback_data ("leave:{session_id}").
+    2. Guard: reject if session is not published.
+    3. Remove the player from the roster via roster_service.remove_player().
+    4. Edit the session message to reflect updated list.
+    5. Notify the admin group that this player withdrew.
+    """
+    query = update.callback_query
+    telegram_user_id = query.from_user.id
+    session_id = UUID(query.data.split(":", 1)[1])
+
+    loop = asyncio.get_running_loop()
+
+    # Guard: only allow withdrawals from published sessions
+    session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
+    if session.status != "published":
+        await query.answer("This session is no longer open for changes.", show_alert=True)
+        return
+
+    try:
+        removed = await loop.run_in_executor(
+            None, roster_service.remove_player, session_id, telegram_user_id
+        )
+    except ValueError as exc:
+        await query.answer(str(exc), show_alert=True)
+        return
+
+    player = await loop.run_in_executor(
+        None, player_service.get_by_telegram_id, telegram_user_id
+    )
+    player_name = player.name if player else "Unknown"
+
+    await query.answer(f"You've left the session, {player_name}. See you next time! 👋", show_alert=True)
+
+    from app.bot.runner import bot_runner
+
+    await bot_runner.edit_session_message(session_id)
+    await bot_runner.post_withdraw_notification(removed, player_name, session_id)
+
+
+async def handle_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Respond to /help with a player-facing usage guide."""
+    await update.message.reply_text(format_help_text())
 
 
 async def handle_name_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
