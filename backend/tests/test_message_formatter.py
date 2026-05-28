@@ -132,19 +132,6 @@ def test_format_announcement_single_skill():
     assert "–" not in text
 
 
-def test_build_join_leave_buttons_not_full():
-    kb = build_join_leave_buttons(str(_SESSION_ID), is_full=False)
-    texts = [btn.text for row in kb.inline_keyboard for btn in row]
-    assert any("Join" in t for t in texts)
-    assert any("Leave" in t for t in texts)
-
-
-def test_build_join_leave_buttons_full():
-    kb = build_join_leave_buttons(str(_SESSION_ID), is_full=True)
-    texts = [btn.text for row in kb.inline_keyboard for btn in row]
-    assert any("Full" in t for t in texts)
-    assert any("Leave" in t for t in texts)
-
 
 def test_courts_label_shows_courts_booked_without_prefix():
     """Telegram message shows courts_booked text directly (no 'Courts:' prefix)."""

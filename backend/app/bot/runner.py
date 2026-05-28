@@ -19,8 +19,7 @@ from app.bot.handlers import (
     periodic_cleanup,
 )
 from app.bot.message_formatter import (
-    build_full_button,
-    build_join_button,
+    build_join_leave_buttons,
     format_admin_summary,
     format_cancellation_message,
     format_session_announcement,
@@ -94,7 +93,7 @@ class BotRunner:
         text = format_session_announcement(
             session, roster, player_names, venue.name, paynow_name, paynow_phone
         )
-        keyboard = build_join_button(str(session.id))
+        keyboard = build_join_leave_buttons(str(session.id), is_full=False)
 
         message = await self._app.bot.send_message(
             chat_id=settings.telegram_lowkey_chat_id,
@@ -141,9 +140,7 @@ class BotRunner:
 
         active_count = sum(1 for e in session.roster if not e.is_waitlisted)
         is_full = active_count >= session.max_pax
-        keyboard: InlineKeyboardMarkup = (
-            build_full_button() if is_full else build_join_button(str(session_id))
-        )
+        keyboard = build_join_leave_buttons(str(session_id), is_full=is_full)
 
         from telegram.error import BadRequest
 
