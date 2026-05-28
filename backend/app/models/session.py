@@ -24,10 +24,11 @@ class Session(BaseModel):
     max_skill_level: str
     pub_fee: float
     max_pax: int
-    status: str              # internal | published | completed
+    status: str              # internal | published | completed | cancelled
     telegram_message_id: int | None = None
     paynow_player_id: UUID | None = None
     created_at: datetime
+    cancellation_reason: str | None = None
 
 
 class SessionCreate(BaseModel):
@@ -37,8 +38,8 @@ class SessionCreate(BaseModel):
     duration_hours: float = 2.0
     courts_booked: str
     num_courts: int = 1
-    min_skill_level: SkillLevelStr = "LI"
-    max_skill_level: SkillLevelStr = "MI"
+    min_skill_level: SkillLevelStr = "HB"
+    max_skill_level: SkillLevelStr = "LI"
     pub_fee: float
     max_pax: Annotated[int, Field(gt=0)] | None = None  # None → service sets num_courts × 6
     paynow_player_id: UUID | None = None
@@ -46,6 +47,7 @@ class SessionCreate(BaseModel):
 
 
 class SessionUpdate(BaseModel):
+    venue_id: UUID | None = None
     date: _date | None = None
     start_time: _time | None = None
     duration_hours: float | None = None  # updating this recomputes DB end_time automatically

@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from uuid import UUID
 from app.db.client import get_service_client
 from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster
@@ -70,32 +69,12 @@ def create(data: SessionCreate) -> Session:
     ).execute()
     session = Session(**result.data)
 
-    internal_result = (
-        client.table("players").select("*").eq("is_internal", True).order("name").execute()
-    )
-
-    if internal_result.data:
-        now = datetime.now(timezone.utc).isoformat()
-        roster_rows = [
-            {
-                "session_id": str(session.id),
-                "player_id": player["id"],
-                "player_type": "registered",
-                "payment_status": "verified_paid",
-                "is_waitlisted": False,
-                "position": i,
-                "joined_at": now,
-            }
-            for i, player in enumerate(internal_result.data, 1)
-        ]
-        client.table("roster_entries").insert(roster_rows).execute()
-
     return session
 
 
 def update(session_id: UUID, data: SessionUpdate) -> Session:
     client = get_service_client()
-    payload = data.model_dump(mode="json", exclude_none=True)
+    payload = data.model_dump(mode="json", exclude_unset=True)
     if not payload:
         raise ValueError("No fields to update")
     result = (

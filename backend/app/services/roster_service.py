@@ -106,7 +106,7 @@ def add_player(
         "session_id": str(session_id),
         "player_id": str(player.id),
         "player_type": "registered",
-        "payment_status": "unpaid",
+        "payment_status": "verified_paid" if player.is_internal else "unpaid",
         "is_waitlisted": is_waitlisted,
         "position": next_position,
         "joined_at": now,
