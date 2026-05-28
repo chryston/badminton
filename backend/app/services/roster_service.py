@@ -180,6 +180,34 @@ def remove_entry(entry_id: UUID) -> RosterEntry | None:
     return removed
 
 
+def remove_player(session_id: UUID, telegram_user_id: int) -> RosterEntry:
+    """Remove a registered player from the roster by their Telegram ID.
+
+    Raises ValueError if the player or their roster entry is not found.
+    Returns the deleted RosterEntry (so callers can inspect payment_status).
+    """
+    player = player_service.get_by_telegram_id(telegram_user_id)
+    if player is None:
+        raise ValueError("Player not found")
+
+    client = get_service_client()
+    result = (
+        client.table("roster_entries")
+        .select("id")
+        .eq("session_id", str(session_id))
+        .eq("player_id", str(player.id))
+        .execute()
+    )
+    if not result.data:
+        raise ValueError("You are not on this session's roster.")
+
+    entry_id = UUID(result.data[0]["id"])
+    removed = remove_entry(entry_id)
+    if removed is None:
+        raise ValueError("Failed to remove roster entry")
+    return removed
+
+
 def verify_payment(entry_id: UUID) -> RosterEntry:
     client = get_service_client()
     result = (
