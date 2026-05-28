@@ -24,7 +24,6 @@ from app.bot.message_formatter import (
     build_join_leave_buttons,
     format_admin_summary,
     format_cancellation_message,
-    format_recruit_message,
     format_session_announcement,
     format_withdraw_notification,
 )
@@ -192,7 +191,11 @@ class BotRunner:
         """Notify the admin group when a player withdraws."""
         loop = asyncio.get_running_loop()
         session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
+        if session is None:
+            return
         venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
+        if venue is None:
+            return
         was_paid = entry.payment_status == "verified_paid"
         text = format_withdraw_notification(player_name, session, venue.name, was_paid)
         try:
