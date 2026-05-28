@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -57,8 +58,5 @@ def test_cannot_cancel_completed_session():
     row = _make_session_row("completed")
     client = _make_db_client(row)
     with patch("app.services.session_service.get_service_client", return_value=client):
-        try:
+        with pytest.raises(ValueError, match="(?i)completed"):
             session_service.cancel(uuid4(), "reason")
-            assert False, "Expected ValueError"
-        except ValueError as e:
-            assert "completed" in str(e).lower()

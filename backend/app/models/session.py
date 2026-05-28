@@ -71,7 +71,7 @@ class SessionWithRoster(Session):
 
 
 class CancelRequest(BaseModel):
-    reason: str
+    reason: Annotated[str, Field(min_length=1)]
 
 
 # Forward reference resolved below
