@@ -8,6 +8,7 @@ const STATUS_BADGE: Record<string, string> = {
   internal: 'bg-gray-700 text-gray-300',
   published: 'bg-green-900/60 text-green-300',
   completed: 'bg-blue-900/60 text-blue-300',
+  cancelled: 'bg-red-900/60 text-red-300',
 }
 
 

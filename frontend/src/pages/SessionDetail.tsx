@@ -20,6 +20,7 @@ const STATUS_BADGE: Record<SessionStatus, string> = {
   internal: 'bg-gray-700 text-gray-300',
   published: 'bg-green-900/60 text-green-300',
   completed: 'bg-blue-900/60 text-blue-300',
+  cancelled: 'bg-red-900/60 text-red-300',
 }
 
 const PAYMENT_BADGE: Record<PaymentStatus, string> = {
@@ -60,7 +61,7 @@ function Spinner() {
 interface ShuttleModalProps {
   batches: ShuttleBatch[]
   onClose: () => void
-  onConfirm: (usages: { batch_id: string; quantity: number }[]) => Promise<void>
+  onConfirm: (usages: { batch_id: string; count_used: number }[]) => Promise<void>
 }
 
 function ShuttleModal({ batches, onClose, onConfirm }: ShuttleModalProps) {
@@ -78,7 +79,7 @@ function ShuttleModal({ batches, onClose, onConfirm }: ShuttleModalProps) {
     setSubmitting(true)
     const usages = Object.entries(quantities)
       .filter(([, qty]) => qty > 0)
-      .map(([batch_id, quantity]) => ({ batch_id, quantity }))
+      .map(([batch_id, qty]) => ({ batch_id, count_used: qty }))
     try {
       await onConfirm(usages)
     } catch (err) {
@@ -182,6 +183,9 @@ export function SessionDetail() {
 
   useEffect(() => {
     if (!id) return
+    setLoading(true)
+    setSession(null)
+    setError(null)
     const controller = new AbortController()
     async function load(signal: AbortSignal) {
       try {
@@ -240,9 +244,9 @@ export function SessionDetail() {
     }
   }
 
-  async function handleComplete(usages: { batch_id: string; quantity: number }[]) {
+  async function handleComplete(usages: { batch_id: string; count_used: number }[]) {
     if (!id) return
-    const updated = await api.post<Session>(`/api/v1/sessions/${id}/complete`, { shuttle_usages: usages })
+    const updated = await api.post<Session>(`/api/v1/sessions/${id}/complete`, usages)
     setSession(updated)
     setShowCompleteModal(false)
     try {
@@ -578,14 +582,14 @@ function RosterRow({ entry, name, typeBadge, onVerify, onRemove, verifying, remo
       <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${PAYMENT_BADGE[entry.payment_status]}`}>
         {PAYMENT_LABEL[entry.payment_status]}
       </span>
-      {entry.payment_status === 'pending_verification' && (
+      {entry.payment_status !== 'verified_paid' && (
         <button
           onClick={() => onVerify(entry.id)}
           disabled={verifying}
           title="Verify payment"
-          className="shrink-0 rounded-lg bg-green-900/50 border border-green-700 px-2 py-1 text-xs text-green-300 hover:bg-green-800/50 disabled:opacity-50 transition-colors"
+          className="shrink-0 rounded-lg bg-green-800 px-2 py-1 text-xs font-medium text-green-200 hover:bg-green-700 disabled:opacity-50"
         >
-          {verifying ? '…' : '✓'}
+          Verify ✓
         </button>
       )}
       <button

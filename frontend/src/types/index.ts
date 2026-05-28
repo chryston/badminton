@@ -1,6 +1,6 @@
 export type SkillLevel = 'LB' | 'MB' | 'HB' | 'LI' | 'MI' | 'HI' | 'A';
 export type PaymentStatus = 'unpaid' | 'pending_verification' | 'verified_paid';
-export type SessionStatus = 'internal' | 'published' | 'completed';
+export type SessionStatus = 'internal' | 'published' | 'completed' | 'cancelled';
 export type PlayerType = 'registered' | 'guest';
 
 export const SKILL_LEVELS: SkillLevel[] = ['LB', 'MB', 'HB', 'LI', 'MI', 'HI', 'A'];
