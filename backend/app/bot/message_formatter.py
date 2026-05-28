@@ -32,7 +32,7 @@ def format_session_announcement(
         "🏸 Badminton Session",
         f"📅 {date_str} {time_str}",
         f"📍 {venue_name}",
-        f"🏟️ Courts: {session.courts_booked}",
+        f"🏟️ {session.courts_booked}",
         _skill_range_label(session.min_skill_level, session.max_skill_level),
         f"💰 Fee: ${session.pub_fee:.0f} per pax",
         f"👤 Max: {session.max_pax} players",
@@ -59,6 +59,18 @@ def format_session_announcement(
             lines.append(f"W{i}. {name}")
 
     return "\n".join(lines)
+
+
+def format_cancellation_message(session: Session, venue_name: str, reason: str) -> str:
+    """Format a cancellation notice for the LOWKEY group."""
+    date_str = session.date.strftime("%a, %d %b %Y")
+    time_str = f"{session.start_time.strftime('%H:%M')} - {session.end_time.strftime('%H:%M')}"
+    return "\n".join([
+        "❌ Session Cancelled",
+        f"📅 {date_str} {time_str} · {venue_name}",
+        f"Reason: {reason}",
+        "Sorry for the inconvenience! 🙏",
+    ])
 
 
 def format_admin_summary(session: Session, venue_name: str) -> str:

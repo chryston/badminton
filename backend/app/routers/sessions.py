@@ -53,4 +53,5 @@ async def cancel_session(
     _=Depends(require_admin),
 ):
     session = session_service.cancel(session_id, body.reason)
+    asyncio.create_task(bot_runner.post_cancellation_message(session, body.reason))
     return session

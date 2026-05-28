@@ -137,3 +137,23 @@ def test_join_button_callback_data():
     markup = build_join_button("test-session-123")
     button = markup.inline_keyboard[0][0]
     assert button.callback_data == "join:test-session-123"
+
+
+def test_courts_label_shows_courts_booked_without_prefix():
+    """Telegram message shows courts_booked text directly (no 'Courts:' prefix)."""
+    session = _session()
+    text = format_session_announcement(
+        session, [], {}, "Sports Hub", "Belle", "9123456"
+    )
+    assert f"🏟️ {session.courts_booked}" in text
+    assert "Courts:" not in text
+
+
+def test_format_cancellation_message():
+    """Cancellation message contains date, venue, and reason."""
+    from app.bot.message_formatter import format_cancellation_message
+    session = _session()
+    text = format_cancellation_message(session, "Sports Hub", "Not enough players")
+    assert "❌" in text
+    assert "Not enough players" in text
+    assert "Sports Hub" in text

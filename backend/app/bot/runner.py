@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import UUID
 
 from telegram import InlineKeyboardMarkup
@@ -21,6 +22,7 @@ from app.bot.message_formatter import (
     build_full_button,
     build_join_button,
     format_admin_summary,
+    format_cancellation_message,
     format_session_announcement,
 )
 from app.config import settings
@@ -156,6 +158,28 @@ class BotRunner:
             if "message is not modified" not in str(e).lower():
                 raise
             # silently ignore — message content unchanged
+
+    async def post_cancellation_message(self, session: Session, reason: str) -> None:
+        """Post a cancellation notice to the LOWKEY group chat.
+
+        Only sends if the session had a Telegram message (was published).
+        """
+        if session.telegram_message_id is None:
+            return  # session was never published — nothing to notify
+
+        loop = asyncio.get_running_loop()
+        venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
+        text = format_cancellation_message(session, venue.name, reason)
+
+        try:
+            await self._app.bot.send_message(
+                chat_id=settings.telegram_lowkey_chat_id,
+                text=text,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to send cancellation message for session %s", session.id
+            )
 
     async def update_payment_in_message(self, session_id: UUID) -> None:
         """Trigger a full message re-render after a payment status change."""
