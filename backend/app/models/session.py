@@ -70,6 +70,10 @@ class SessionWithRoster(Session):
     waitlist_count: int = 0
 
 
+class CancelRequest(BaseModel):
+    reason: str
+
+
 # Forward reference resolved below
 from app.models.roster import RosterEntry
 SessionWithRoster.model_rebuild()

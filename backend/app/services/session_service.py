@@ -146,3 +146,20 @@ def complete(session_id: UUID, shuttle_usages: list[ShuttleUsageCreate]) -> Sess
         raise ValueError(f"Session {session_id} not found")
 
     return get_by_id(session_id)
+
+
+def cancel(session_id: UUID, reason: str) -> Session:
+    client = get_service_client()
+    existing = client.table("sessions").select("status").eq("id", str(session_id)).execute()
+    if not existing.data:
+        raise ValueError(f"Session {session_id} not found")
+    current_status = existing.data[0]["status"]
+    if current_status in ("completed", "cancelled"):
+        raise ValueError(f"Cannot cancel a {current_status} session")
+    result = (
+        client.table("sessions")
+        .update({"status": "cancelled", "cancellation_reason": reason})
+        .eq("id", str(session_id))
+        .execute()
+    )
+    return Session(**result.data[0])

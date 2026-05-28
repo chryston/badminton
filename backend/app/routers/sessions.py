@@ -2,7 +2,7 @@ import asyncio
 from uuid import UUID
 from fastapi import APIRouter, Depends, Body
 from app.dependencies import require_admin
-from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster
+from app.models.session import Session, SessionCreate, SessionUpdate, SessionWithRoster, CancelRequest
 from app.models.shuttle import ShuttleUsageCreate
 import app.services.session_service as session_service
 from app.bot.runner import bot_runner
@@ -44,3 +44,13 @@ async def complete_session(
     _=Depends(require_admin),
 ):
     return session_service.complete(session_id, shuttle_usages)
+
+
+@router.post("/{session_id}/cancel", response_model=Session)
+async def cancel_session(
+    session_id: UUID,
+    body: CancelRequest,
+    _=Depends(require_admin),
+):
+    session = session_service.cancel(session_id, body.reason)
+    return session
