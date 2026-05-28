@@ -1,3 +1,4 @@
+import logging
 import math
 from uuid import UUID
 
@@ -46,10 +47,15 @@ def create(data: ShuttleBatchCreate) -> ShuttleBatch:
     if batch.remaining_count > 0:
         tubes = math.ceil(batch.remaining_count / batch.shuttles_per_tube)
         purchase_cost = round(tubes * batch.cost_per_tube, 2)
-        fund_service.add_entry(FundEntryCreate(
-            description=f"Shuttle batch: {batch.batch_name} ({batch.brand})",
-            amount=-purchase_cost,
-        ))
+        try:
+            fund_service.add_entry(FundEntryCreate(
+                description=f"Shuttle batch: {batch.batch_name} ({batch.brand})",
+                amount=-purchase_cost,
+            ))
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to record fund entry for shuttle batch %s", batch.id
+            )
 
     return batch
 
