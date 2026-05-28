@@ -199,7 +199,7 @@ def remove_player(session_id: UUID, telegram_user_id: int) -> RosterEntry:
         .execute()
     )
     if not result.data:
-        raise ValueError("You are not on this session's roster.")
+        raise ValueError("Player is not on this session's roster")
 
     entry_id = UUID(result.data[0]["id"])
     removed = remove_entry(entry_id)
