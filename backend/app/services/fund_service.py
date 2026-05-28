@@ -11,6 +11,8 @@ def get_entries() -> list[FundEntry]:
 def add_entry(data: FundEntryCreate) -> FundEntry:
     client = get_service_client()
     result = client.table("fund_entries").insert(data.model_dump(mode="json")).execute()
+    if not result.data:
+        raise ValueError("Failed to create fund entry")
     return FundEntry(**result.data[0])
 
 
