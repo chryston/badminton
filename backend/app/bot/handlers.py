@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot.conversation import conversation_state
-from app.bot.message_formatter import format_help_text, format_withdraw_notification
+from app.bot.message_formatter import format_help_text
 from app.services import player_service, roster_service
 import app.services.session_service as session_service
 
@@ -92,7 +92,7 @@ async def handle_withdraw_callback(update: Update, context: ContextTypes.DEFAULT
 
     # Guard: only allow withdrawals from published sessions
     session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
-    if session.status != "published":
+    if session is None or session.status != "published":
         await query.answer("This session is no longer open for changes.", show_alert=True)
         return
 
