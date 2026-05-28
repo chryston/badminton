@@ -1,5 +1,9 @@
+import math
 from uuid import UUID
+
+import app.services.fund_service as fund_service
 from app.db.client import get_service_client
+from app.models.fund import FundEntryCreate
 from app.models.shuttle import ShuttleBatch, ShuttleBatchCreate, ShuttleBatchUpdate
 
 
@@ -36,7 +40,18 @@ def create(data: ShuttleBatchCreate) -> ShuttleBatch:
         .insert(data.model_dump(mode="json", exclude_none=True))
         .execute()
     )
-    return ShuttleBatch(**result.data[0])
+    batch = ShuttleBatch(**result.data[0])
+
+    # Auto-record shuttle purchase cost in fund ledger (skip if no shuttles in batch).
+    if batch.remaining_count > 0:
+        tubes = math.ceil(batch.remaining_count / batch.shuttles_per_tube)
+        purchase_cost = round(tubes * batch.cost_per_tube, 2)
+        fund_service.add_entry(FundEntryCreate(
+            description=f"Shuttle batch: {batch.batch_name} ({batch.brand})",
+            amount=-purchase_cost,
+        ))
+
+    return batch
 
 
 def update(batch_id: UUID, data: ShuttleBatchUpdate) -> ShuttleBatch:
