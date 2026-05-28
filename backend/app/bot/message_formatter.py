@@ -85,18 +85,6 @@ def format_admin_summary(session: Session, venue_name: str) -> str:
     )
 
 
-def build_join_button(session_id: str) -> InlineKeyboardMarkup:
-    """Build inline keyboard with Join button. CallbackData: 'join:{session_id}'."""
-    keyboard = [[InlineKeyboardButton("Join ✋", callback_data=f"join:{session_id}")]]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def build_full_button() -> InlineKeyboardMarkup:
-    """Build keyboard showing session is full (non-functional button)."""
-    keyboard = [[InlineKeyboardButton("Full 🔒", callback_data="full")]]
-    return InlineKeyboardMarkup(keyboard)
-
-
 def _entry_display_name(entry: RosterEntry, player_names: dict[UUID, str]) -> str:
     if entry.guest_name:
         return entry.guest_name
@@ -109,3 +97,78 @@ def _skill_range_label(min_level: str, max_level: str) -> str:
     if min_level == max_level:
         return f"🎯 Level: {min_level}"
     return f"🎯 Level: {min_level} – {max_level}"
+
+
+def format_withdraw_notification(
+    player_name: str,
+    session: Session,
+    venue_name: str,
+    was_paid: bool,
+) -> str:
+    """Format an admin-group notification when a player withdraws."""
+    date_str = session.date.strftime("%a, %d %b %Y")
+    time_str = f"{session.start_time.strftime('%H:%M')} – {session.end_time.strftime('%H:%M')}"
+    pay_line = "⚠️ They had PAID — please return their money. 💸" if was_paid else "They had not paid."
+    return "\n".join([
+        f"🚪 {player_name} has withdrawn from the session.",
+        f"📅 {date_str} {time_str} · {venue_name}",
+        pay_line,
+    ])
+
+
+def format_help_text() -> str:
+    """Player-facing /help guide."""
+    return "\n".join([
+        "🏸 Badminton Bot — Help",
+        "",
+        "▶️ To join a game:",
+        "  Press [Join ✋] on any session post in the group.",
+        "",
+        "🚪 To leave a game:",
+        "  Press [Leave 🚪] on the same session post.",
+        "",
+        "💳 To pay:",
+        "  PayNow to the details shown in the session post.",
+        "  Send your payment screenshot to an admin.",
+        "  Admin will mark you as ✅ paid once confirmed.",
+        "",
+        "❓ Need help? Message an admin directly.",
+    ])
+
+
+def format_recruit_message(session: Session, slots_left: int, venue_name: str) -> str:
+    """Format a player-recruitment post for the admin group."""
+    date_str = session.date.strftime("%d %b %Y, %a")
+    start_str = session.start_time.strftime("%I:%M %p").lstrip("0")
+    end_str = session.end_time.strftime("%I:%M %p").lstrip("0")
+    if session.min_skill_level == session.max_skill_level:
+        skill_str = session.min_skill_level
+    else:
+        skill_str = f"{session.min_skill_level} – {session.max_skill_level}"
+    slot_label = f"[{slots_left} slot{'s' if slots_left != 1 else ''} left]"
+    court_label = f"{session.num_courts} court{'s' if session.num_courts != 1 else ''}"
+    return "\n".join([
+        "Looking for friendly players to join the following game:",
+        "",
+        slot_label,
+        f"Date: {date_str}",
+        f"Time: {start_str} – {end_str}",
+        f"Venue: {venue_name}",
+        f"Level: {skill_str}",
+        f"Cost: ${session.pub_fee:.0f} per pax",
+        f"Max {session.max_pax} pax, ({court_label})",
+        "RSL Ultimate shuttles provided",
+        "",
+        "PM if interested, thank you!",
+    ])
+
+
+def build_join_leave_buttons(session_id: str, is_full: bool) -> InlineKeyboardMarkup:
+    """Build inline keyboard with Join (or Full) and Leave buttons."""
+    join_btn = (
+        InlineKeyboardButton("Full 🔒", callback_data="full")
+        if is_full
+        else InlineKeyboardButton("Join ✋", callback_data=f"join:{session_id}")
+    )
+    leave_btn = InlineKeyboardButton("Leave 🚪", callback_data=f"leave:{session_id}")
+    return InlineKeyboardMarkup([[join_btn, leave_btn]])

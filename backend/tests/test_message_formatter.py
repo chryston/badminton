@@ -2,7 +2,7 @@
 from datetime import date, time, datetime, timezone
 from uuid import UUID, uuid4
 
-from app.bot.message_formatter import format_session_announcement, build_join_button
+from app.bot.message_formatter import format_session_announcement, build_join_leave_buttons
 from app.models.roster import RosterEntry
 from app.models.session import Session
 
@@ -132,11 +132,18 @@ def test_format_announcement_single_skill():
     assert "–" not in text
 
 
-def test_join_button_callback_data():
-    """Join button callback_data is 'join:{session_id}'."""
-    markup = build_join_button("test-session-123")
-    button = markup.inline_keyboard[0][0]
-    assert button.callback_data == "join:test-session-123"
+def test_build_join_leave_buttons_not_full():
+    kb = build_join_leave_buttons(str(_SESSION_ID), is_full=False)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("Join" in t for t in texts)
+    assert any("Leave" in t for t in texts)
+
+
+def test_build_join_leave_buttons_full():
+    kb = build_join_leave_buttons(str(_SESSION_ID), is_full=True)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("Full" in t for t in texts)
+    assert any("Leave" in t for t in texts)
 
 
 def test_courts_label_shows_courts_booked_without_prefix():
