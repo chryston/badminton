@@ -16,13 +16,17 @@ from app.bot.handlers import (
     handle_join_callback,
     handle_name_message,
     handle_start,
+    handle_withdraw_callback,
+    handle_help_command,
     periodic_cleanup,
 )
 from app.bot.message_formatter import (
     build_join_leave_buttons,
     format_admin_summary,
     format_cancellation_message,
+    format_recruit_message,
     format_session_announcement,
+    format_withdraw_notification,
 )
 from app.config import settings
 from app.models.roster import RosterEntry
@@ -49,6 +53,10 @@ class BotRunner:
         self._app.add_handler(
             CallbackQueryHandler(handle_join_callback, pattern=r"^join:")
         )
+        self._app.add_handler(
+            CallbackQueryHandler(handle_withdraw_callback, pattern=r"^leave:")
+        )
+        self._app.add_handler(CommandHandler("help", handle_help_command))
         self._app.add_handler(
             MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_name_message)
         )
@@ -177,6 +185,49 @@ class BotRunner:
             logging.getLogger(__name__).exception(
                 "Failed to send cancellation message for session %s", session.id
             )
+
+    async def post_withdraw_notification(
+        self, entry: RosterEntry, player_name: str, session_id: UUID
+    ) -> None:
+        """Notify the admin group when a player withdraws."""
+        loop = asyncio.get_running_loop()
+        session = await loop.run_in_executor(None, session_service.get_by_id, session_id)
+        venue = await loop.run_in_executor(None, venue_service.get_by_id, session.venue_id)
+        was_paid = entry.payment_status == "verified_paid"
+        text = format_withdraw_notification(player_name, session, venue.name, was_paid)
+        try:
+            await self._app.bot.send_message(
+                chat_id=settings.telegram_admin_chat_id,
+                text=text,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to send withdraw notification for session %s", session_id
+            )
+
+    async def delete_session_message(self, session: Session) -> None:
+        """Delete the LOWKEY group message when a session is completed."""
+        if session.telegram_message_id is None:
+            return
+        try:
+            await self._app.bot.delete_message(
+                chat_id=settings.telegram_lowkey_chat_id,
+                message_id=session.telegram_message_id,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to delete session message %s", session.id
+            )
+
+    async def post_recruit_message(self, message: str) -> None:
+        """Send a recruitment message to the admin group."""
+        try:
+            await self._app.bot.send_message(
+                chat_id=settings.telegram_admin_chat_id,
+                text=message,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to post recruit message")
 
     async def update_payment_in_message(self, session_id: UUID) -> None:
         """Trigger a full message re-render after a payment status change."""
