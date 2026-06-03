@@ -1,8 +1,0 @@
-{"type":"server-started","port":54122,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:54122","screen_dir":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content","state_dir":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/state"}
-{"type":"screen-added","file":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content/clarifying-questions.html"}
-{"source":"user-event","type":"click","text":"Q1\n    \n      How does a player identify themselves when clicking \"Join\"?\n      A) Their Telegram display name is used automatically\n         B) The bot sends them a private message asking for their name\n         C) They type a /join command with their name","choice":"q1","id":null,"timestamp":1779525238028}
-{"type":"screen-added","file":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content/architecture-approaches.html"}
-{"type":"screen-added","file":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content/db-schema.html"}
-{"type":"screen-added","file":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content/data-flow.html"}
-{"type":"screen-added","file":"/home/chryston/docker/copilot/repos/badminton/.superpowers/brainstorm/144-1779524689/content/dashboard-wireframe.html"}
-{"type":"server-stopped","reason":"idle timeout"}
